@@ -1135,7 +1135,7 @@ private:
       SmallVector<SCEVUse, 2> Operands;
       if (ExprL == &OldL) {
         for (SCEVUse Op : Expr->operands())
-          Operands.push_back(Op.getPointer());
+          Operands.push_back(Op);
         return SE.getAddRecExpr(Operands, &NewL, Expr->getNoWrapFlags());
       }
 
@@ -1145,11 +1145,11 @@ private:
           Valid = false;
           return Expr;
         }
-        return visit(Expr->getStart().getPointer());
+        return visit(Expr->getStart());
       }
 
       for (SCEVUse Op : Expr->operands())
-        Operands.push_back(visit(Op.getPointer()));
+        Operands.push_back(visit(Op));
       return SE.getAddRecExpr(Operands, ExprL, Expr->getNoWrapFlags());
     }
 
