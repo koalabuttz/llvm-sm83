@@ -286,7 +286,7 @@ static cl::opt<bool> WriteBoltInfoSection(
     "bolt-info", cl::desc("write bolt info section in the output binary"),
     cl::init(true), cl::Hidden, cl::cat(BoltOutputCategory));
 
-static cl::list<GadgetScannerKind> GadgetScannersToRun(
+static cl::list<GadgetKindBitmask> GadgetScannersToRun(
     "scanners", cl::desc("Which gadget scanners to run"),
     cl::values(
         clEnumValN(GS_PTRAUTH_RETURN_TARGETS, "ptrauth-pac-ret",
@@ -3878,17 +3878,17 @@ void RewriteInstance::runBinaryAnalyses() {
   BinaryFunctionPassManager Manager(*BC);
   // FIXME: add a pass that warns about which functions do not have CFG,
   // and therefore, analysis is most likely to be less accurate.
-  using GSK = opts::GadgetScannerKind;
-  using PAuthScanner = PAuthGadgetScanner::Analysis;
+  using PtrAuthScanner = PAuthGadgetScanner::Analysis;
 
   // If no command line option was given, act as if "all" was specified.
-  uint64_t AnalysesMask = 0;
-  for (uint64_t Submask : opts::GadgetScannersToRun)
-    AnalysesMask |= Submask;
+  decltype(~opts::GS_ALL_MASK) EnabledAnalyses = 0;
+  for (auto NamedOptionSubmask : opts::GadgetScannersToRun)
+    EnabledAnalyses |= NamedOptionSubmask;
 
-  uint64_t PAuthAnalysesMask = AnalysesMask & GSK::GS_PTRAUTH_ALL_MASK;
-  if (PAuthAnalysesMask)
-    Manager.registerPass(std::make_unique<PAuthScanner>(PAuthAnalysesMask));
+  const auto PtrAuthAnalyses = static_cast<opts::GadgetKindBitmask>(
+      EnabledAnalyses & opts::GS_PTRAUTH_ALL_MASK);
+  if (PtrAuthAnalyses)
+    Manager.registerPass(std::make_unique<PtrAuthScanner>(PtrAuthAnalyses));
 
   BC->logBOLTErrorsAndQuitOnFatal(Manager.runPasses());
 }
