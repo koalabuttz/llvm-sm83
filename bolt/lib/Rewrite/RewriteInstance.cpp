@@ -3880,10 +3880,14 @@ void RewriteInstance::runBinaryAnalyses() {
   // and therefore, analysis is most likely to be less accurate.
   using PtrAuthScanner = PAuthGadgetScanner::Analysis;
 
-  // If no command line option was given, act as if "all" was specified.
+  // Accumulate all enabled analyses.
   decltype(~opts::GS_ALL_MASK) EnabledAnalyses = 0;
   for (auto NamedOptionSubmask : opts::GadgetScannersToRun)
     EnabledAnalyses |= NamedOptionSubmask;
+
+  // If no command line option was given, act as if "all" was specified.
+  if (opts::GadgetScannersToRun.empty())
+    EnabledAnalyses = opts::GS_ALL_MASK;
 
   const auto PtrAuthAnalyses = static_cast<opts::GadgetKindBitmask>(
       EnabledAnalyses & opts::GS_PTRAUTH_ALL_MASK);

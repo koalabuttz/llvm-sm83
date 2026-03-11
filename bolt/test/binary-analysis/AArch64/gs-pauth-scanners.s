@@ -36,6 +36,12 @@
 // RUN:     FileCheck %s --implicit-check-not="found in function" \
 // RUN:                  --check-prefixes=PACRET,TAIL-CALLS-COMMON,TAIL-CALLS-NOFPAC,FORWARD-CF,SIGN-ORACLES-COMMON,SIGN-ORACLES-NOFPAC,AUTH-ORACLES-NOFPAC
 
+// Implicitly select all scanners by omitting --scanners=... argument.
+//
+// RUN: llvm-bolt-binary-analysis %t.exe 2>&1 | \
+// RUN:     FileCheck %s --implicit-check-not="found in function" \
+// RUN:                  --check-prefixes=PACRET,TAIL-CALLS-COMMON,TAIL-CALLS-NOFPAC,FORWARD-CF,SIGN-ORACLES-COMMON,SIGN-ORACLES-NOFPAC,AUTH-ORACLES-NOFPAC
+
 // Test FPAC handling:
 //
 // RUN: llvm-bolt-binary-analysis --auth-traps-on-failure --scanners=ptrauth-all %t.exe 2>&1 | \
