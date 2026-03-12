@@ -186,7 +186,7 @@ public:
 };
 
 class Analysis : public BinaryFunctionPass {
-  /// Bitmask of detectors to run.
+  /// Bitmask of detectors to run (only GS_PTRAUTH_* are allowed).
   opts::GadgetKindBitmask EnabledDetectors;
 
   void runOnFunction(BinaryFunction &Function,
