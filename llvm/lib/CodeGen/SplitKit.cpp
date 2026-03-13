@@ -615,6 +615,12 @@ bool SplitEditor::rematWillIncreaseRestriction(const MachineInstr *DefMI,
   const TargetRegisterClass *SuperRC =
       TRI.getLargestLegalSuperClass(RC, *MBB.getParent());
 
+  // If the register class is already at its largest legal super class,
+  // there is no room for inflation after the split, so rematerialization
+  // cannot undo a subclass-based split.
+  if (SuperRC == RC)
+    return false;
+
   Register DefReg = DefMI->getOperand(DefOperandIdx).getReg();
   const TargetRegisterClass *UseConstrainRC =
       UseMI->getRegClassConstraintEffectForVReg(DefReg, SuperRC, &TII, &TRI,
