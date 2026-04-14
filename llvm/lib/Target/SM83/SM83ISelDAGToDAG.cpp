@@ -56,6 +56,40 @@ char SM83DAGToDAGISelLegacy::ID = 0;
 INITIALIZE_PASS(SM83DAGToDAGISelLegacy, DEBUG_TYPE, PASS_NAME, false, false)
 
 void SM83DAGToDAGISel::Select(SDNode *N) {
+  unsigned Opcode = N->getOpcode();
+
+  switch (Opcode) {
+  case ISD::TRUNCATE: {
+    // i16 -> i8: extract the low byte (sub_lo).
+    SDValue Op = N->getOperand(0);
+    SDLoc DL(N);
+    SDValue Sub = CurDAG->getTargetExtractSubreg(SM83::sub_lo, DL, MVT::i8, Op);
+    ReplaceNode(N, Sub.getNode());
+    return;
+  }
+  case ISD::ZERO_EXTEND: {
+    // i8 -> i16: insert into sub_lo of a pair, hi byte = 0.
+    SDValue Op = N->getOperand(0);
+    SDLoc DL(N);
+    // Load 0 into a register for the high byte.
+    SDValue Zero = CurDAG->getTargetConstant(0, DL, MVT::i8);
+    SDNode *ZeroReg = CurDAG->getMachineNode(SM83::LDri, DL, MVT::i8, Zero);
+    // Build the pair: (lo=Op, hi=0).
+    SDValue Ops[] = {
+        CurDAG->getTargetConstant(SM83::GR16RegClassID, DL, MVT::i32),
+        Op,
+        CurDAG->getTargetConstant(SM83::sub_lo, DL, MVT::i32),
+        SDValue(ZeroReg, 0),
+        CurDAG->getTargetConstant(SM83::sub_hi, DL, MVT::i32)};
+    SDNode *Pair = CurDAG->getMachineNode(TargetOpcode::REG_SEQUENCE, DL,
+                                          MVT::i16, Ops);
+    ReplaceNode(N, Pair);
+    return;
+  }
+  default:
+    break;
+  }
+
   SelectCode(N);
 }
 
