@@ -104,6 +104,8 @@ bool SM83ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case SM83::SUB16rr: return expandSUB16(MBB, MI);
   case SM83::LOAD_STACK8: return expandLOAD_STACK8(MBB, MI);
   case SM83::STORE_STACK8: return expandSTORE_STACK8(MBB, MI);
+  case SM83::LOAD_FI8: return expandLOAD_STACK8(MBB, MI);
+  case SM83::STORE_FI8: return expandSTORE_STACK8(MBB, MI);
   default:
     return false;
   }

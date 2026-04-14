@@ -101,7 +101,18 @@ def STORE8 : Pseudo<(outs), (ins GPR8:$src, i16imm:$addr),
                     "# STORE8 [$addr], $src",
                     [(store i8:$src, (SM83Wrapper tglobaladdr:$addr))]>;
 
+// Load/store from frame index (stack-allocated local variables).
+// Selected manually in ISelDAGToDAG for loads/stores to frame indices.
+let mayLoad = 1, hasSideEffects = 0 in
+def LOAD_FI8 : Pseudo<(outs GPR8:$dst), (ins i16imm:$fi),
+                      "# LOAD_FI8 $dst, [$fi]", []>;
+
+let mayStore = 1, hasSideEffects = 0 in
+def STORE_FI8 : Pseudo<(outs), (ins GPR8:$src, i16imm:$fi),
+                       "# STORE_FI8 [$fi], $src", []>;
+
 // Stack spill pseudos — expanded to LDHLSP + LD r,(HL) / LD (HL),r.
+// Used by register allocator for spills, not matched by patterns.
 let mayLoad = 1, hasSideEffects = 0, mayStore = 0 in
 def LOAD_STACK8 : Pseudo<(outs GPR8:$dst), (ins i16imm:$offset),
                          "# LOAD_STACK8 $dst, SP+$offset", []>;

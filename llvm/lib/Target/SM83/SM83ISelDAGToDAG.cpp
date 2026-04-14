@@ -59,6 +59,42 @@ void SM83DAGToDAGISel::Select(SDNode *N) {
   unsigned Opcode = N->getOpcode();
 
   switch (Opcode) {
+  case ISD::LOAD: {
+    // Handle load from frame index: load i8, frameindex -> LOAD_FI8
+    auto *LD = cast<LoadSDNode>(N);
+    SDValue Addr = LD->getBasePtr();
+    if (Addr.getOpcode() == ISD::FrameIndex && LD->getMemoryVT() == MVT::i8) {
+      SDLoc DL(N);
+      int FI = cast<FrameIndexSDNode>(Addr)->getIndex();
+      SDValue FINode = CurDAG->getTargetFrameIndex(FI, MVT::i16);
+      SDNode *Res = CurDAG->getMachineNode(SM83::LOAD_FI8, DL, MVT::i8,
+                                           MVT::Other, FINode,
+                                           LD->getChain());
+      CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
+      CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 1), SDValue(Res, 1));
+      CurDAG->RemoveDeadNode(N);
+      return;
+    }
+    break;
+  }
+  case ISD::STORE: {
+    // Handle store to frame index: store i8 val, frameindex -> STORE_FI8
+    auto *ST = cast<StoreSDNode>(N);
+    SDValue Addr = ST->getBasePtr();
+    if (Addr.getOpcode() == ISD::FrameIndex && ST->getMemoryVT() == MVT::i8 &&
+        !ST->isTruncatingStore()) {
+      SDLoc DL(N);
+      int FI = cast<FrameIndexSDNode>(Addr)->getIndex();
+      SDValue FINode = CurDAG->getTargetFrameIndex(FI, MVT::i16);
+      SDNode *Res = CurDAG->getMachineNode(SM83::STORE_FI8, DL, MVT::Other,
+                                           ST->getValue(), FINode,
+                                           ST->getChain());
+      CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
+      CurDAG->RemoveDeadNode(N);
+      return;
+    }
+    break;
+  }
   case ISD::TRUNCATE: {
     // i16 -> i8: extract the low byte (sub_lo).
     SDValue Op = N->getOperand(0);
