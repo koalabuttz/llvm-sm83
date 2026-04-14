@@ -57,6 +57,7 @@ public:
   }
 
   bool addInstSelector() override;
+  void addPreSched2() override;
 };
 } // namespace
 
@@ -70,6 +71,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSM83Target() {
   auto &PR = *PassRegistry::getPassRegistry();
   initializeSM83AsmPrinterPass(PR);
   initializeSM83DAGToDAGISelLegacyPass(PR);
+  initializeSM83ExpandPseudoPass(PR);
 }
 
 const SM83Subtarget *SM83TargetMachine::getSubtargetImpl() const {
@@ -84,6 +86,10 @@ SM83TargetMachine::getSubtargetImpl(const Function &) const {
 bool SM83PassConfig::addInstSelector() {
   addPass(createSM83ISelDag(getSM83TargetMachine(), getOptLevel()));
   return false;
+}
+
+void SM83PassConfig::addPreSched2() {
+  addPass(createSM83ExpandPseudoPass());
 }
 
 } // end namespace llvm

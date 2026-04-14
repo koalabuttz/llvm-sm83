@@ -22,8 +22,11 @@ class PassRegistry;
 FunctionPass *createSM83ISelDag(SM83TargetMachine &TM,
                                 CodeGenOptLevel OptLevel);
 
+FunctionPass *createSM83ExpandPseudoPass();
+
 void initializeSM83AsmPrinterPass(PassRegistry &);
 void initializeSM83DAGToDAGISelLegacyPass(PassRegistry &);
+void initializeSM83ExpandPseudoPass(PassRegistry &);
 
 } // end namespace llvm
 

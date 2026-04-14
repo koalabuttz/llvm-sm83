@@ -14,6 +14,7 @@ add_public_tablegen_target(SM83CommonTableGen)
 
 add_llvm_target(SM83CodeGen
   SM83AsmPrinter.cpp
+  SM83ExpandPseudoInsts.cpp
   SM83FrameLowering.cpp
   SM83InstrInfo.cpp
   SM83ISelDAGToDAG.cpp

@@ -90,6 +90,39 @@ def SELECT8 : Pseudo<(outs GPR8:$dst),
                        (SM83selectcc i8:$src1, i8:$src2, imm:$cc))]>;
 
 //===----------------------------------------------------------------------===//
+// i8 ALU pseudo instructions (expanded to LD A + ALU + result in A)
+// These exist because SM83's ALU works through the accumulator, but
+// the register allocator needs to see two-operand instructions.
+//===----------------------------------------------------------------------===//
+
+let Defs = [F] in {
+def ADD8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
+                    "# ADD8 $dst, $src1, $src2",
+                    [(set i8:$dst, (add i8:$src1, i8:$src2))]>;
+def SUB8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
+                    "# SUB8 $dst, $src1, $src2",
+                    [(set i8:$dst, (sub i8:$src1, i8:$src2))]>;
+def AND8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
+                    "# AND8 $dst, $src1, $src2",
+                    [(set i8:$dst, (and i8:$src1, i8:$src2))]>;
+def OR8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
+                   "# OR8 $dst, $src1, $src2",
+                   [(set i8:$dst, (or i8:$src1, i8:$src2))]>;
+def XOR8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
+                    "# XOR8 $dst, $src1, $src2",
+                    [(set i8:$dst, (xor i8:$src1, i8:$src2))]>;
+def SHL8r : Pseudo<(outs GPR8:$dst), (ins GPR8:$src, GPR8:$amt),
+                   "# SHL8 $dst, $src, $amt",
+                   [(set i8:$dst, (shl i8:$src, i8:$amt))]>;
+def SRL8r : Pseudo<(outs GPR8:$dst), (ins GPR8:$src, GPR8:$amt),
+                   "# SRL8 $dst, $src, $amt",
+                   [(set i8:$dst, (srl i8:$src, i8:$amt))]>;
+def SRA8r : Pseudo<(outs GPR8:$dst), (ins GPR8:$src, GPR8:$amt),
+                   "# SRA8 $dst, $src, $amt",
+                   [(set i8:$dst, (sra i8:$src, i8:$amt))]>;
+}
+
+//===----------------------------------------------------------------------===//
 // NOP / HALT / STOP / DI / EI / DAA / CPL / SCF / CCF
 //===----------------------------------------------------------------------===//
 
