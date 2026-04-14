@@ -65,7 +65,7 @@ def brtarget : Operand<OtherVT>;
 
 // Condition codes for SM83: NZ=0, Z=1, NC=2, C=3
 def SM83condcode : Operand<i8> {
-  let PrintMethod = "printOperand";
+  let PrintMethod = "printCondCode";
 }
 
 //===----------------------------------------------------------------------===//
@@ -633,10 +633,10 @@ def JR : SM83Inst16<(outs), (ins brtarget:$target),
 
 // Conditional jumps
 let isBranch = 1, isTerminator = 1, hasSideEffects = 0, Uses = [F] in {
-def JPcc : SM83Inst24<(outs), (ins i8imm:$cc, i16imm:$target),
+def JPcc : SM83Inst24<(outs), (ins SM83condcode:$cc, i16imm:$target),
                       "jp\t$cc, $target", []>;
 
-def JRcc : SM83Inst16<(outs), (ins i8imm:$cc, brtarget:$target),
+def JRcc : SM83Inst16<(outs), (ins SM83condcode:$cc, brtarget:$target),
                       "jr\t$cc, $target", []>;
 }
 
@@ -651,7 +651,7 @@ def CALL : SM83Inst24<(outs), (ins i16imm:$target, variable_ops),
                       "call\t$target",
                       [(SM83call imm:$target)]>;
 
-def CALLcc : SM83Inst24<(outs), (ins i8imm:$cc, i16imm:$target),
+def CALLcc : SM83Inst24<(outs), (ins SM83condcode:$cc, i16imm:$target),
                         "call\t$cc, $target", []> {
   let Uses = [SP, F];
 }
@@ -673,7 +673,7 @@ def RETI : SM83Inst8<(outs), (ins), "reti", []>;
 // Conditional RET
 let isReturn = 1, isTerminator = 1, Defs = [SP], Uses = [SP, F],
     hasSideEffects = 0, mayLoad = 1 in
-def RETcc : SM83Inst8<(outs), (ins i8imm:$cc), "ret\t$cc", []>;
+def RETcc : SM83Inst8<(outs), (ins SM83condcode:$cc), "ret\t$cc", []>;
 
 // RST — restart vectors
 let isCall = 1, Defs = [SP], Uses = [SP], hasSideEffects = 0 in

@@ -5,7 +5,7 @@
 define i8 @branch_eq(i8 %a, i8 %b) {
 ; CHECK-LABEL: branch_eq:
 ; CHECK:       cp c
-; CHECK:       jr
+; CHECK:       jr nz,
 ; CHECK:       ld a, 1
 ; CHECK:       ret
 ; CHECK:       ld a, 0

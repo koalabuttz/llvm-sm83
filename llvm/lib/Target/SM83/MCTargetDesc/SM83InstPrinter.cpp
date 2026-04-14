@@ -47,4 +47,16 @@ void SM83InstPrinter::printOperand(const MCInst *MI, unsigned OpNo,
   }
 }
 
+void SM83InstPrinter::printCondCode(const MCInst *MI, unsigned OpNo,
+                                    raw_ostream &O) {
+  const MCOperand &Op = MI->getOperand(OpNo);
+  assert(Op.isImm() && "Expected immediate for condition code");
+  static const char *const CCNames[] = {"nz", "z", "nc", "c"};
+  unsigned CC = Op.getImm();
+  if (CC < 4)
+    O << CCNames[CC];
+  else
+    O << CC; // fallback for unknown codes
+}
+
 } // end namespace llvm

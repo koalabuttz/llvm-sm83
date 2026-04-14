@@ -47,6 +47,8 @@ private:
   bool expandMBB(MachineBasicBlock &MBB);
   bool expandMI(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
 
+  void emitLD(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+              const DebugLoc &DL, Register DstReg, Register SrcReg);
   bool expandALU8rr(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
                     unsigned ALUOpc);
   bool expandShift8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
@@ -121,6 +123,15 @@ bool SM83ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   }
 }
 
+// Emit LD dst, src only if they differ (eliminates identity loads).
+void SM83ExpandPseudo::emitLD(MachineBasicBlock &MBB,
+                              MachineBasicBlock::iterator MI,
+                              const DebugLoc &DL,
+                              Register DstReg, Register SrcReg) {
+  if (DstReg != SrcReg)
+    BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstReg).addReg(SrcReg);
+}
+
 bool SM83ExpandPseudo::expandALU8rr(MachineBasicBlock &MBB,
                                     MachineBasicBlock::iterator MI,
                                     unsigned ALUOpc) {
@@ -129,15 +140,13 @@ bool SM83ExpandPseudo::expandALU8rr(MachineBasicBlock &MBB,
   Register Src1Reg = MI->getOperand(1).getReg();
   Register Src2Reg = MI->getOperand(2).getReg();
 
-  // LD A, src1
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::A)
-      .addReg(Src1Reg);
+  // LD A, src1 (skip if already A)
+  emitLD(MBB, MI, DL, SM83::A, Src1Reg);
   // ALU A, src2
   BuildMI(MBB, MI, DL, TII->get(ALUOpc))
       .addReg(Src2Reg);
-  // LD dst, A
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstReg)
-      .addReg(SM83::A);
+  // LD dst, A (skip if already A)
+  emitLD(MBB, MI, DL, DstReg, SM83::A);
 
   MI->eraseFromParent();
   return true;
@@ -169,9 +178,8 @@ bool SM83ExpandPseudo::expandCMP8(MachineBasicBlock &MBB,
   Register LHSReg = MI->getOperand(0).getReg();
   Register RHSReg = MI->getOperand(1).getReg();
 
-  // LD A, lhs
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::A)
-      .addReg(LHSReg);
+  // LD A, lhs (skip if already A)
+  emitLD(MBB, MI, DL, SM83::A, LHSReg);
   // CP rhs (compares A with rhs, sets flags)
   BuildMI(MBB, MI, DL, TII->get(SM83::CPr))
       .addReg(RHSReg);
@@ -237,13 +245,13 @@ bool SM83ExpandPseudo::expandBitwise16(MachineBasicBlock &MBB,
   Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
 
   // Low bytes: LD A, src1.lo / OP src2.lo / LD dst.lo, A
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::A).addReg(Src1Lo);
+  emitLD(MBB, MI, DL, SM83::A, Src1Lo);
   BuildMI(MBB, MI, DL, TII->get(LoOpc)).addReg(Src2Lo);
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SM83::A);
+  emitLD(MBB, MI, DL, DstLo, SM83::A);
   // High bytes: LD A, src1.hi / OP src2.hi / LD dst.hi, A
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::A).addReg(Src1Hi);
+  emitLD(MBB, MI, DL, SM83::A, Src1Hi);
   BuildMI(MBB, MI, DL, TII->get(HiOpc)).addReg(Src2Hi);
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstHi).addReg(SM83::A);
+  emitLD(MBB, MI, DL, DstHi, SM83::A);
 
   MI->eraseFromParent();
   return true;
