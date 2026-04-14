@@ -67,14 +67,33 @@ void SM83InstrInfo::storeRegToStackSlot(
     MachineBasicBlock &MBB, MachineBasicBlock::iterator MI, Register SrcReg,
     bool isKill, int FrameIndex, const TargetRegisterClass *RC, Register VReg,
     MachineInstr::MIFlag Flags) const {
-  report_fatal_error("SM83: storeRegToStackSlot not yet implemented");
+  DebugLoc DL;
+  if (MI != MBB.end())
+    DL = MI->getDebugLoc();
+
+  if (SM83::GPR8RegClass.hasSubClassEq(RC)) {
+    BuildMI(MBB, MI, DL, get(SM83::STORE_STACK8))
+        .addReg(SrcReg, getKillRegState(isKill))
+        .addFrameIndex(FrameIndex);
+  } else {
+    report_fatal_error("SM83: unsupported register class for stack spill");
+  }
 }
 
 void SM83InstrInfo::loadRegFromStackSlot(
     MachineBasicBlock &MBB, MachineBasicBlock::iterator MI, Register DestReg,
     int FrameIndex, const TargetRegisterClass *RC, Register VReg,
     unsigned SubReg, MachineInstr::MIFlag Flags) const {
-  report_fatal_error("SM83: loadRegFromStackSlot not yet implemented");
+  DebugLoc DL;
+  if (MI != MBB.end())
+    DL = MI->getDebugLoc();
+
+  if (SM83::GPR8RegClass.hasSubClassEq(RC)) {
+    BuildMI(MBB, MI, DL, get(SM83::LOAD_STACK8), DestReg)
+        .addFrameIndex(FrameIndex);
+  } else {
+    report_fatal_error("SM83: unsupported register class for stack reload");
+  }
 }
 
 } // end namespace llvm

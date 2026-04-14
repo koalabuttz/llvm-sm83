@@ -101,6 +101,15 @@ def STORE8 : Pseudo<(outs), (ins GPR8:$src, i16imm:$addr),
                     "# STORE8 [$addr], $src",
                     [(store i8:$src, (SM83Wrapper tglobaladdr:$addr))]>;
 
+// Stack spill pseudos — expanded to LDHLSP + LD r,(HL) / LD (HL),r.
+let mayLoad = 1, hasSideEffects = 0, mayStore = 0 in
+def LOAD_STACK8 : Pseudo<(outs GPR8:$dst), (ins i16imm:$offset),
+                         "# LOAD_STACK8 $dst, SP+$offset", []>;
+
+let mayStore = 1, hasSideEffects = 0, mayLoad = 0 in
+def STORE_STACK8 : Pseudo<(outs), (ins GPR8:$src, i16imm:$offset),
+                          "# STORE_STACK8 SP+$offset, $src", []>;
+
 // CMP pseudo — expanded to LD A, src1 / CP src2. Sets flags.
 let Defs = [F] in
 def CMP8rr : Pseudo<(outs), (ins GPR8:$lhs, GPR8:$rhs),
@@ -145,6 +154,18 @@ def SRA8r : Pseudo<(outs GPR8:$dst), (ins GPR8:$src, GPR8:$amt),
                    "# SRA8 $dst, $src, $amt",
                    [(set i8:$dst, (sra i8:$src, i8:$amt))]>;
 }
+
+// i16 ADD pseudo — expanded to copy to HL + ADD HL,rr.
+let Defs = [F] in
+def ADD16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
+                     "# ADD16 $dst, $src1, $src2",
+                     [(set i16:$dst, (add i16:$src1, i16:$src2))]>;
+
+// i16 SUB pseudo — expanded to lo/hi byte subtraction.
+let Defs = [F] in
+def SUB16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
+                     "# SUB16 $dst, $src1, $src2",
+                     [(set i16:$dst, (sub i16:$src1, i16:$src2))]>;
 
 //===----------------------------------------------------------------------===//
 // NOP / HALT / STOP / DI / EI / DAA / CPL / SCF / CCF

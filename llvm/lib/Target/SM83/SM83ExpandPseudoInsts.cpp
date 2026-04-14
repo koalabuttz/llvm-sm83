@@ -55,6 +55,10 @@ private:
   bool expandBRCOND(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLOAD8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandSTORE8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandADD16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandSUB16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandLOAD_STACK8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandSTORE_STACK8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
 };
 
 } // namespace
@@ -96,6 +100,10 @@ bool SM83ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case SM83::BRCONDcc: return expandBRCOND(MBB, MI);
   case SM83::LOAD8: return expandLOAD8(MBB, MI);
   case SM83::STORE8: return expandSTORE8(MBB, MI);
+  case SM83::ADD16rr: return expandADD16(MBB, MI);
+  case SM83::SUB16rr: return expandSUB16(MBB, MI);
+  case SM83::LOAD_STACK8: return expandLOAD_STACK8(MBB, MI);
+  case SM83::STORE_STACK8: return expandSTORE_STACK8(MBB, MI);
   default:
     return false;
   }
@@ -170,6 +178,92 @@ bool SM83ExpandPseudo::expandBRCOND(MachineBasicBlock &MBB,
   BuildMI(MBB, MI, DL, TII->get(SM83::JRcc))
       .addImm(CC)
       .add(Target);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandADD16(MachineBasicBlock &MBB,
+                                   MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register DstReg = MI->getOperand(0).getReg();
+  Register Src1Reg = MI->getOperand(1).getReg();
+  Register Src2Reg = MI->getOperand(2).getReg();
+  const SM83RegisterInfo &RI = TII->getRegisterInfo();
+
+  // Copy src1 to HL.
+  Register Src1Lo = RI.getSubReg(Src1Reg, SM83::sub_lo);
+  Register Src1Hi = RI.getSubReg(Src1Reg, SM83::sub_hi);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::L).addReg(Src1Lo);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::H).addReg(Src1Hi);
+  // ADD HL, src2
+  BuildMI(MBB, MI, DL, TII->get(SM83::ADDHLrr)).addReg(Src2Reg);
+  // Copy HL to dst.
+  Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
+  Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SM83::L);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstHi).addReg(SM83::H);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandSUB16(MachineBasicBlock &MBB,
+                                   MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register DstReg = MI->getOperand(0).getReg();
+  Register Src1Reg = MI->getOperand(1).getReg();
+  Register Src2Reg = MI->getOperand(2).getReg();
+  const SM83RegisterInfo &RI = TII->getRegisterInfo();
+
+  Register Src1Lo = RI.getSubReg(Src1Reg, SM83::sub_lo);
+  Register Src1Hi = RI.getSubReg(Src1Reg, SM83::sub_hi);
+  Register Src2Lo = RI.getSubReg(Src2Reg, SM83::sub_lo);
+  Register Src2Hi = RI.getSubReg(Src2Reg, SM83::sub_hi);
+  Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
+  Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
+
+  // Sub low bytes: LD A, src1.lo / SUB src2.lo / LD dst.lo, A
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::A).addReg(Src1Lo);
+  BuildMI(MBB, MI, DL, TII->get(SM83::SUBr)).addReg(Src2Lo);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SM83::A);
+  // Sub high bytes with carry: LD A, src1.hi / SBC A, src2.hi / LD dst.hi, A
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::A).addReg(Src1Hi);
+  BuildMI(MBB, MI, DL, TII->get(SM83::SBCr)).addReg(Src2Hi);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstHi).addReg(SM83::A);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandLOAD_STACK8(MachineBasicBlock &MBB,
+                                         MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register DstReg = MI->getOperand(0).getReg();
+  MachineOperand &OffsetOp = MI->getOperand(1);
+
+  // LD HL, SP + offset
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLSP))
+      .add(OffsetOp);
+  // LD dst, (HL)
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrHL), DstReg);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandSTORE_STACK8(MachineBasicBlock &MBB,
+                                          MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register SrcReg = MI->getOperand(0).getReg();
+  MachineOperand &OffsetOp = MI->getOperand(1);
+
+  // LD HL, SP + offset
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLSP))
+      .add(OffsetOp);
+  // LD (HL), src
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLr))
+      .addReg(SrcReg);
 
   MI->eraseFromParent();
   return true;
