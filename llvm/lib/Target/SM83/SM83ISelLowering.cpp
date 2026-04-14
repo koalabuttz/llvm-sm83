@@ -451,9 +451,10 @@ SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     else
       report_fatal_error("SM83: unsupported return type in call");
 
-    Chain = DAG.getCopyFromReg(Chain, DL, Reg, VT, InGlue).getValue(1);
-    InVals.push_back(Chain.getNode()->getOperand(0));
-    InGlue = Chain.getValue(2);
+    SDValue Val = DAG.getCopyFromReg(Chain, DL, Reg, VT, InGlue);
+    InVals.push_back(Val.getValue(0));
+    Chain = Val.getValue(1);
+    InGlue = Val.getValue(2);
   }
 
   return Chain;
