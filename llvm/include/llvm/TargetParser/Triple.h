@@ -56,6 +56,7 @@ public:
     aarch64_32,  // AArch64 (little endian) ILP32: aarch64_32
     arc,         // ARC: Synopsys ARC
     avr,         // AVR: Atmel AVR microcontroller
+    sm83,        // SM83: Sharp SM83 (Game Boy / Game Boy Color)
     bpfel,       // eBPF or extended BPF or 64-bit BPF (little endian)
     bpfeb,       // eBPF or extended BPF or 64-bit BPF (big endian)
     csky,        // CSKY: csky
@@ -1010,6 +1011,8 @@ public:
   }
 
   bool isAVR() const { return getArch() == Triple::avr; }
+
+  bool isSM83() const { return getArch() == Triple::sm83; }
 
   /// Tests whether the target is 32-bit LoongArch.
   bool isLoongArch32() const { return getArch() == Triple::loongarch32; }
