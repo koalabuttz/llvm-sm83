@@ -19,7 +19,12 @@ public:
 
   void emitPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
   void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
+  bool hasReservedCallFrame(const MachineFunction &MF) const override;
+
+protected:
   bool hasFPImpl(const MachineFunction &MF) const override;
+
+public:
   MachineBasicBlock::iterator
   eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
                                 MachineBasicBlock::iterator MI) const override;

@@ -51,12 +51,39 @@ BitVector SM83RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   return Reserved;
 }
 
-bool SM83RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator MI,
+bool SM83RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
                                            int SPAdj,
                                            unsigned FIOperandNum,
                                            RegScavenger *RS) const {
-  // Stub — will be implemented in Phase 4.
-  report_fatal_error("SM83: frame index elimination not yet implemented");
+  MachineInstr &MI = *II;
+  MachineBasicBlock &MBB = *MI.getParent();
+  const MachineFunction &MF = *MBB.getParent();
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  const TargetFrameLowering *TFI = MF.getSubtarget().getFrameLowering();
+  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
+  DebugLoc DL = MI.getDebugLoc();
+
+  int FrameIndex = MI.getOperand(FIOperandNum).getIndex();
+  int Offset = MFI.getObjectOffset(FrameIndex);
+  Offset += MFI.getStackSize() - TFI->getOffsetOfLocalArea();
+
+  // Fold in any additional offset from the operand.
+  if (MI.getNumOperands() > FIOperandNum + 1 &&
+      MI.getOperand(FIOperandNum + 1).isImm())
+    Offset += MI.getOperand(FIOperandNum + 1).getImm();
+
+  // For SM83, stack access goes through HL.
+  // Load HL = SP + offset, then use (HL) for the actual load/store.
+  // This is done by the LDHLSP instruction which does LD HL, SP+imm8s.
+  // If offset fits in signed 8-bit, use LDHLSP directly.
+  // Otherwise, we need a longer sequence.
+
+  // Replace the frame index with SP and the computed offset.
+  MI.getOperand(FIOperandNum).ChangeToRegister(SM83::SP, false);
+  if (MI.getNumOperands() > FIOperandNum + 1)
+    MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Offset);
+
+  return false;
 }
 
 Register SM83RegisterInfo::getFrameRegister(const MachineFunction &MF) const {
