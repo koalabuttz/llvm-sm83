@@ -60,52 +60,118 @@ void SM83DAGToDAGISel::Select(SDNode *N) {
 
   switch (Opcode) {
   case ISD::LOAD: {
-    // Handle load from frame index: load i8, frameindex -> LOAD_FI8
     auto *LD = cast<LoadSDNode>(N);
     SDValue Addr = LD->getBasePtr();
-    if (Addr.getOpcode() == ISD::FrameIndex && LD->getMemoryVT() == MVT::i8) {
+    if (Addr.getOpcode() == ISD::FrameIndex && !LD->isIndexed()) {
       SDLoc DL(N);
       int FI = cast<FrameIndexSDNode>(Addr)->getIndex();
       SDValue FINode = CurDAG->getTargetFrameIndex(FI, MVT::i16);
-      SDNode *Res = CurDAG->getMachineNode(SM83::LOAD_FI8, DL, MVT::i8,
-                                           MVT::Other, FINode,
-                                           LD->getChain());
-      CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
-      CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 1), SDValue(Res, 1));
-      CurDAG->RemoveDeadNode(N);
-      return;
+      if (LD->getMemoryVT() == MVT::i8) {
+        // load i8, frameindex -> LOAD_FI8
+        SDNode *Res = CurDAG->getMachineNode(SM83::LOAD_FI8, DL, MVT::i8,
+                                             MVT::Other, FINode,
+                                             LD->getChain());
+        CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
+        CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 1), SDValue(Res, 1));
+        CurDAG->RemoveDeadNode(N);
+        return;
+      } else if (LD->getMemoryVT() == MVT::i16) {
+        // load i16, frameindex -> LOAD_FI16
+        SDNode *Res = CurDAG->getMachineNode(SM83::LOAD_FI16, DL, MVT::i16,
+                                             MVT::Other, FINode,
+                                             LD->getChain());
+        CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
+        CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 1), SDValue(Res, 1));
+        CurDAG->RemoveDeadNode(N);
+        return;
+      }
     }
     break;
   }
   case ISD::STORE: {
-    // Handle store to frame index: store i8 val, frameindex -> STORE_FI8
     auto *ST = cast<StoreSDNode>(N);
     SDValue Addr = ST->getBasePtr();
-    if (Addr.getOpcode() == ISD::FrameIndex && ST->getMemoryVT() == MVT::i8 &&
-        !ST->isTruncatingStore()) {
+    if (Addr.getOpcode() == ISD::FrameIndex && !ST->isTruncatingStore() &&
+        !ST->isIndexed()) {
       SDLoc DL(N);
       int FI = cast<FrameIndexSDNode>(Addr)->getIndex();
       SDValue FINode = CurDAG->getTargetFrameIndex(FI, MVT::i16);
-      SDNode *Res = CurDAG->getMachineNode(SM83::STORE_FI8, DL, MVT::Other,
-                                           ST->getValue(), FINode,
-                                           ST->getChain());
-      CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
-      CurDAG->RemoveDeadNode(N);
-      return;
+      if (ST->getMemoryVT() == MVT::i8) {
+        // store i8 val, frameindex -> STORE_FI8
+        SDNode *Res = CurDAG->getMachineNode(SM83::STORE_FI8, DL, MVT::Other,
+                                             ST->getValue(), FINode,
+                                             ST->getChain());
+        CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
+        CurDAG->RemoveDeadNode(N);
+        return;
+      } else if (ST->getMemoryVT() == MVT::i16) {
+        // store i16 val, frameindex -> STORE_FI16
+        SDNode *Res = CurDAG->getMachineNode(SM83::STORE_FI16, DL, MVT::Other,
+                                             ST->getValue(), FINode,
+                                             ST->getChain());
+        CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
+        CurDAG->RemoveDeadNode(N);
+        return;
+      }
     }
     break;
   }
-  case ISD::TRUNCATE: {
-    // i16 -> i8: extract the low byte (sub_lo).
+  case ISD::SIGN_EXTEND: {
+    // i8 -> i16 sign extension: emit SEXT8_16 pseudo.
+    // Expand pass lowers to: LD dst.lo, src; LD A, src; ADD A, A; SBC A, A; LD dst.hi, A.
     SDValue Op = N->getOperand(0);
     SDLoc DL(N);
-    SDValue Sub = CurDAG->getTargetExtractSubreg(SM83::sub_lo, DL, MVT::i8, Op);
+    SDNode *Res = CurDAG->getMachineNode(SM83::SEXT8_16, DL, MVT::i16, Op);
+    ReplaceNode(N, Res);
+    return;
+  }
+  case ISD::EXTRACT_ELEMENT: {
+    // Extract i8 lo or hi byte from i16 — used for 16-bit comparisons.
+    SDValue Op = N->getOperand(0);
+    if (Op.getValueType() != MVT::i16 || N->getValueType(0) != MVT::i8)
+      break;
+    ConstantSDNode *IdxC = cast<ConstantSDNode>(N->getOperand(1));
+    SDLoc DL(N);
+    unsigned SubRegIdx = IdxC->getZExtValue() == 0 ? SM83::sub_lo : SM83::sub_hi;
+    SDValue Sub = CurDAG->getTargetExtractSubreg(SubRegIdx, DL, MVT::i8, Op);
+    ReplaceNode(N, Sub.getNode());
+    return;
+  }
+  case ISD::TRUNCATE: {
+    SDValue Op0 = N->getOperand(0);
+    // Same-type truncate is a no-op: replace with operand directly.
+    if (N->getValueType(0) == Op0.getValueType()) {
+      ReplaceNode(N, Op0.getNode());
+      return;
+    }
+    // Only handle i16 -> i8 truncations; others go through SelectCode.
+    if (N->getValueType(0) != MVT::i8 || Op0.getValueType() != MVT::i16)
+      break;
+    SDLoc DL(N);
+    // Special case: TRUNCATE(SRL(v:i16, 8)) = extract hi byte.
+    // The DAGCombiner converts EXTRACT_ELEMENT(v, 1) to SRL(v, 8) + TRUNCATE,
+    // so we intercept it here as a pair and emit a direct sub_hi extraction.
+    if (Op0.getOpcode() == ISD::SRL && Op0.getValueType() == MVT::i16) {
+      if (auto *Amt = dyn_cast<ConstantSDNode>(Op0.getOperand(1))) {
+        if (Amt->getZExtValue() == 8) {
+          SDValue Sub = CurDAG->getTargetExtractSubreg(SM83::sub_hi, DL,
+                                                        MVT::i8, Op0.getOperand(0));
+          ReplaceNode(N, Sub.getNode());
+          return;
+        }
+      }
+    }
+    // Default: i16 -> i8: extract the low byte (sub_lo).
+    SDValue Sub = CurDAG->getTargetExtractSubreg(SM83::sub_lo, DL, MVT::i8, Op0);
     ReplaceNode(N, Sub.getNode());
     return;
   }
   case ISD::ANY_EXTEND:
   case ISD::ZERO_EXTEND: {
     // i8 -> i16: insert into sub_lo of a pair, hi byte = 0.
+    // Only handle the i16 output case; smaller extends go through SelectCode.
+    if (N->getValueType(0) != MVT::i16)
+      break;
     SDValue Op = N->getOperand(0);
     SDLoc DL(N);
     // Load 0 into a register for the high byte.

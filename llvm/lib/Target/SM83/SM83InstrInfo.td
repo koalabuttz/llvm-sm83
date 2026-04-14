@@ -49,6 +49,19 @@ def SM83brcond : SDNode<"SM83ISD::BRCOND", SDT_SM83Brcond,
 
 def SM83cmp : SDNode<"SM83ISD::CMP", SDT_SM83Cmp, [SDNPOutGlue]>;
 
+// CMPC — compare with carry (for 16-bit hi-byte comparison).
+// Same type profile as CMP, but takes and produces glue (CP lo → SBC hi chains).
+def SM83cmpc : SDNode<"SM83ISD::CMPC", SDT_SM83Cmp, [SDNPInGlue, SDNPOutGlue]>;
+
+// 16-bit compare type profile: two i16 operands → Glue.
+def SDT_SM83Cmp16 : SDTypeProfile<0, 2, [SDTCisVT<0, i16>, SDTCisVT<1, i16>]>;
+
+// CMP16 — full 16-bit unsigned ordered compare: CP lo + SBC hi → C flag.
+def SM83cmp16 : SDNode<"SM83ISD::CMP16", SDT_SM83Cmp16, [SDNPOutGlue]>;
+
+// CMP16EQ — full 16-bit equality compare: XOR lo + XOR hi + OR → Z flag.
+def SM83cmp16eq : SDNode<"SM83ISD::CMP16EQ", SDT_SM83Cmp16, [SDNPOutGlue]>;
+
 def SM83selectcc : SDNode<"SM83ISD::SELECT_CC", SDT_SM83SelectCC,
                           [SDNPInGlue]>;
 
@@ -111,6 +124,33 @@ let mayStore = 1, hasSideEffects = 0 in
 def STORE_FI8 : Pseudo<(outs), (ins GPR8:$src, i16imm:$fi),
                        "# STORE_FI8 [$fi], $src", []>;
 
+// i16 frame index load/store — for 16-bit local variables (alloca i16).
+// Selected manually in ISelDAGToDAG for i16 loads/stores to frame indices.
+let mayLoad = 1, hasSideEffects = 0 in
+def LOAD_FI16 : Pseudo<(outs GR16:$dst), (ins i16imm:$fi),
+                        "# LOAD_FI16 $dst, [$fi]", []>;
+
+let mayStore = 1, hasSideEffects = 0 in
+def STORE_FI16 : Pseudo<(outs), (ins GR16:$src, i16imm:$fi),
+                        "# STORE_FI16 [$fi], $src", []>;
+
+// Pointer-based load/store — for `load i8, ptr %p` where %p is a GR16 reg.
+// Expands to: copy ptr to HL (if needed), then LD r,(HL) / LD (HL),r.
+let mayLoad = 1, hasSideEffects = 0 in
+def LOAD_PTR8 : Pseudo<(outs GPR8:$dst), (ins GR16:$ptr),
+                        "# LOAD_PTR8 $dst, [$ptr]",
+                        [(set i8:$dst, (load GR16:$ptr))]>;
+
+let mayStore = 1, hasSideEffects = 0 in
+def STORE_PTR8 : Pseudo<(outs), (ins GPR8:$src, GR16:$ptr),
+                        "# STORE_PTR8 [$ptr], $src",
+                        [(store i8:$src, GR16:$ptr)]>;
+
+// SEXT8_16 — sign-extend i8 to i16.
+// Expands to: LD dst.lo, src; LD A, src; ADD A, A; SBC A, A; LD dst.hi, A.
+def SEXT8_16 : Pseudo<(outs GR16:$dst), (ins GPR8:$src),
+                      "# SEXT8_16 $dst, $src", []>;
+
 // Stack spill pseudos — expanded to LDHLSP + LD r,(HL) / LD (HL),r.
 // Used by register allocator for spills, not matched by patterns.
 let mayLoad = 1, hasSideEffects = 0, mayStore = 0 in
@@ -126,6 +166,27 @@ let Defs = [F] in
 def CMP8rr : Pseudo<(outs), (ins GPR8:$lhs, GPR8:$rhs),
                     "# CMP8 $lhs, $rhs",
                     [(SM83cmp i8:$lhs, i8:$rhs)]>;
+
+// CMPC pseudo — compare with carry. Expanded to LD A, src1 / SBC A, src2.
+// Used as second step of 16-bit comparison (after CMP8rr on lo bytes).
+let Defs = [F], Uses = [F] in
+def CMPC8rr : Pseudo<(outs), (ins GPR8:$lhs, GPR8:$rhs),
+                     "# CMPC8 $lhs, $rhs",
+                     [(SM83cmpc i8:$lhs, i8:$rhs)]>;
+
+// CMP16rr — 16-bit unsigned ordered compare.
+// Expands to: LD A,lhs.lo; CP rhs.lo; LD A,lhs.hi; SBC A,rhs.hi → C=(lhs<rhs).
+let Defs = [A, F], hasSideEffects = 1 in
+def CMP16rr : Pseudo<(outs), (ins GR16:$lhs, GR16:$rhs),
+                     "# CMP16 $lhs, $rhs",
+                     [(SM83cmp16 i16:$lhs, i16:$rhs)]>;
+
+// CMP16EQrr — 16-bit equality compare. L is used as a scratch register.
+// Expands to: LD A,lhs.lo; XOR rhs.lo; LD L,A; LD A,lhs.hi; XOR rhs.hi; OR L → Z=(lhs==rhs).
+let Defs = [A, F, L], hasSideEffects = 1 in
+def CMP16EQrr : Pseudo<(outs), (ins GR16:$lhs, GR16:$rhs),
+                        "# CMP16EQ $lhs, $rhs",
+                        [(SM83cmp16eq i16:$lhs, i16:$rhs)]>;
 
 // BRCOND pseudo — conditional branch based on flags.
 let isBranch = 1, isTerminator = 1, Uses = [F] in

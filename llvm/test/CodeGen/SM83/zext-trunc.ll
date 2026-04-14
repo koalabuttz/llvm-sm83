@@ -20,3 +20,16 @@ define i16 @zext_i8_to_i16(i8 %x) {
   %result = zext i8 %x to i16
   ret i16 %result
 }
+
+; Test sign extension from i8 to i16.
+
+define i16 @sext_i8_to_i16(i8 %x) {
+; CHECK-LABEL: sext_i8_to_i16:
+; CHECK:       ld l, a
+; CHECK-NEXT:  add a, a
+; CHECK-NEXT:  sbc a, a
+; CHECK-NEXT:  ld h, a
+; CHECK-NEXT:  ret
+  %result = sext i8 %x to i16
+  ret i16 %result
+}

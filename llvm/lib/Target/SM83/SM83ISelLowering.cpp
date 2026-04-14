@@ -203,20 +203,30 @@ SDValue SM83TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDValue RHS = Op.getOperand(3);
   SDValue Dest = Op.getOperand(4);
 
-  // If comparing i16, truncate to i8 for the CMP instruction.
-  // For EQ/NE against 0, we OR lo|hi and compare result.
-  // For other cases, truncate (handles boolean select lowering).
-  if (LHS.getValueType() == MVT::i16) {
-    LHS = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, LHS);
-    RHS = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, RHS);
-  }
-
   bool NeedSignFlip;
   unsigned SM83CC = mapCondCode(CC, LHS, RHS, DAG, DL, NeedSignFlip);
-  if (NeedSignFlip)
-    applySignFlip(LHS, RHS, DAG, DL);
 
-  SDValue Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
+  SDValue Cmp;
+  if (LHS.getValueType() == MVT::i16) {
+    if (CC == ISD::SETEQ || CC == ISD::SETNE) {
+      // 16-bit equality: XOR both bytes inside the pseudo, set Z flag.
+      Cmp = DAG.getNode(SM83ISD::CMP16EQ, DL, MVT::Glue, LHS, RHS);
+    } else {
+      // 16-bit ordering: CP lo bytes + SBC hi bytes → C flag = (lhs < rhs).
+      // For signed: flip bit 15 of both (XOR 0x8000) to convert to unsigned ordering.
+      if (NeedSignFlip) {
+        SDValue Flip = DAG.getConstant(0x8000, DL, MVT::i16);
+        LHS = DAG.getNode(ISD::XOR, DL, MVT::i16, LHS, Flip);
+        RHS = DAG.getNode(ISD::XOR, DL, MVT::i16, RHS, Flip);
+      }
+      Cmp = DAG.getNode(SM83ISD::CMP16, DL, MVT::Glue, LHS, RHS);
+    }
+  } else {
+    if (NeedSignFlip)
+      applySignFlip(LHS, RHS, DAG, DL);
+    Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
+  }
+
   SDValue CCVal = DAG.getConstant(SM83CC, DL, MVT::i8);
   return DAG.getNode(SM83ISD::BRCOND, DL, MVT::Other, Chain, Dest, CCVal, Cmp);
 }
@@ -230,17 +240,27 @@ SDValue SM83TargetLowering::LowerSELECT_CC(SDValue Op,
   SDValue FalseVal = Op.getOperand(3);
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(4))->get();
 
-  if (LHS.getValueType() == MVT::i16) {
-    LHS = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, LHS);
-    RHS = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, RHS);
-  }
-
   bool NeedSignFlip;
   unsigned SM83CC = mapCondCode(CC, LHS, RHS, DAG, DL, NeedSignFlip);
-  if (NeedSignFlip)
-    applySignFlip(LHS, RHS, DAG, DL);
 
-  SDValue Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
+  SDValue Cmp;
+  if (LHS.getValueType() == MVT::i16) {
+    if (CC == ISD::SETEQ || CC == ISD::SETNE) {
+      Cmp = DAG.getNode(SM83ISD::CMP16EQ, DL, MVT::Glue, LHS, RHS);
+    } else {
+      if (NeedSignFlip) {
+        SDValue Flip = DAG.getConstant(0x8000, DL, MVT::i16);
+        LHS = DAG.getNode(ISD::XOR, DL, MVT::i16, LHS, Flip);
+        RHS = DAG.getNode(ISD::XOR, DL, MVT::i16, RHS, Flip);
+      }
+      Cmp = DAG.getNode(SM83ISD::CMP16, DL, MVT::Glue, LHS, RHS);
+    }
+  } else {
+    if (NeedSignFlip)
+      applySignFlip(LHS, RHS, DAG, DL);
+    Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
+  }
+
   SDValue CCVal = DAG.getConstant(SM83CC, DL, MVT::i8);
   return DAG.getNode(SM83ISD::SELECT_CC, DL, Op.getValueType(),
                      TrueVal, FalseVal, CCVal, Cmp);
@@ -252,17 +272,26 @@ SDValue SM83TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
   SDValue RHS = Op.getOperand(1);
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(2))->get();
 
-  if (LHS.getValueType() == MVT::i16) {
-    LHS = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, LHS);
-    RHS = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, RHS);
-  }
-
   bool NeedSignFlip;
   unsigned SM83CC = mapCondCode(CC, LHS, RHS, DAG, DL, NeedSignFlip);
-  if (NeedSignFlip)
-    applySignFlip(LHS, RHS, DAG, DL);
 
-  SDValue Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
+  SDValue Cmp;
+  if (LHS.getValueType() == MVT::i16) {
+    if (CC == ISD::SETEQ || CC == ISD::SETNE) {
+      Cmp = DAG.getNode(SM83ISD::CMP16EQ, DL, MVT::Glue, LHS, RHS);
+    } else {
+      if (NeedSignFlip) {
+        SDValue Flip = DAG.getConstant(0x8000, DL, MVT::i16);
+        LHS = DAG.getNode(ISD::XOR, DL, MVT::i16, LHS, Flip);
+        RHS = DAG.getNode(ISD::XOR, DL, MVT::i16, RHS, Flip);
+      }
+      Cmp = DAG.getNode(SM83ISD::CMP16, DL, MVT::Glue, LHS, RHS);
+    }
+  } else {
+    if (NeedSignFlip)
+      applySignFlip(LHS, RHS, DAG, DL);
+    Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
+  }
 
   SDValue CCVal = DAG.getConstant(SM83CC, DL, MVT::i8);
   SDValue Zero = DAG.getConstant(0, DL, MVT::i8);
@@ -322,6 +351,9 @@ const char *SM83TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case SM83ISD::WRAPPER:   return "SM83ISD::WRAPPER";
   case SM83ISD::BRCOND:    return "SM83ISD::BRCOND";
   case SM83ISD::CMP:       return "SM83ISD::CMP";
+  case SM83ISD::CMPC:      return "SM83ISD::CMPC";
+  case SM83ISD::CMP16:     return "SM83ISD::CMP16";
+  case SM83ISD::CMP16EQ:   return "SM83ISD::CMP16EQ";
   case SM83ISD::SELECT_CC: return "SM83ISD::SELECT_CC";
   default:                 return nullptr;
   }

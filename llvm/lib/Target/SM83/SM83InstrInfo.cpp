@@ -75,6 +75,10 @@ void SM83InstrInfo::storeRegToStackSlot(
     BuildMI(MBB, MI, DL, get(SM83::STORE_STACK8))
         .addReg(SrcReg, getKillRegState(isKill))
         .addFrameIndex(FrameIndex);
+  } else if (SM83::GR16RegClass.hasSubClassEq(RC)) {
+    BuildMI(MBB, MI, DL, get(SM83::STORE_FI16))
+        .addReg(SrcReg, getKillRegState(isKill))
+        .addFrameIndex(FrameIndex);
   } else {
     report_fatal_error("SM83: unsupported register class for stack spill");
   }
@@ -90,6 +94,9 @@ void SM83InstrInfo::loadRegFromStackSlot(
 
   if (SM83::GPR8RegClass.hasSubClassEq(RC)) {
     BuildMI(MBB, MI, DL, get(SM83::LOAD_STACK8), DestReg)
+        .addFrameIndex(FrameIndex);
+  } else if (SM83::GR16RegClass.hasSubClassEq(RC)) {
+    BuildMI(MBB, MI, DL, get(SM83::LOAD_FI16), DestReg)
         .addFrameIndex(FrameIndex);
   } else {
     report_fatal_error("SM83: unsupported register class for stack reload");

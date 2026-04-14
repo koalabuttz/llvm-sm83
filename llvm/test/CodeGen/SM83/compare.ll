@@ -49,3 +49,25 @@ entry:
 then: ret i8 1
 else: ret i8 0
 }
+
+; Test 16-bit unsigned less-than.
+define i8 @cmp_i16_ult(i16 %a, i16 %b) {
+; CHECK-LABEL: cmp_i16_ult:
+; CHECK:       cp
+; CHECK:       sbc a,
+; CHECK:       ret
+  %cmp = icmp ult i16 %a, %b
+  %r = zext i1 %cmp to i8
+  ret i8 %r
+}
+
+; Test 16-bit equality.
+define i8 @cmp_i16_eq(i16 %a, i16 %b) {
+; CHECK-LABEL: cmp_i16_eq:
+; CHECK:       xor
+; CHECK:       or
+; CHECK:       ret
+  %cmp = icmp eq i16 %a, %b
+  %r = zext i1 %cmp to i8
+  ret i8 %r
+}
