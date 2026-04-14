@@ -103,6 +103,7 @@ void SM83DAGToDAGISel::Select(SDNode *N) {
     ReplaceNode(N, Sub.getNode());
     return;
   }
+  case ISD::ANY_EXTEND:
   case ISD::ZERO_EXTEND: {
     // i8 -> i16: insert into sub_lo of a pair, hi byte = 0.
     SDValue Op = N->getOperand(0);

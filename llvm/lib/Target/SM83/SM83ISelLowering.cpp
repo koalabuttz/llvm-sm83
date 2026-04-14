@@ -38,14 +38,18 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   setSchedulingPreference(Sched::RegPressure);
   setStackPointerRegisterToSaveRestore(SM83::SP);
 
+
   // Custom lowering.
   setOperationAction(ISD::GlobalAddress, MVT::i16, Custom);
   setOperationAction(ISD::ExternalSymbol, MVT::i16, Custom);
   setOperationAction(ISD::BR_CC, MVT::i8, Custom);
-  setOperationAction(ISD::BR_CC, MVT::i16, Expand);
+  setOperationAction(ISD::BR_CC, MVT::i16, Custom);
   setOperationAction(ISD::SELECT_CC, MVT::i8, Custom);
-  setOperationAction(ISD::SELECT_CC, MVT::i16, Expand);
+  setOperationAction(ISD::SELECT_CC, MVT::i16, Custom);
   setOperationAction(ISD::SETCC, MVT::i8, Custom);
+  setOperationAction(ISD::SETCC, MVT::i16, Custom);
+  setOperationAction(ISD::SELECT, MVT::i8, Expand);
+  setOperationAction(ISD::SELECT, MVT::i16, Expand);
 
   // Expand operations SM83 can't do natively.
   setOperationAction(ISD::STACKSAVE, MVT::Other, Expand);
@@ -53,7 +57,7 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i8, Expand);
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i16, Expand);
 
-  setOperationAction(ISD::MUL, MVT::i8, Expand);
+  setOperationAction(ISD::MUL, MVT::i8, Custom);
   setOperationAction(ISD::MUL, MVT::i16, Expand);
   setOperationAction(ISD::SDIV, MVT::i8, Expand);
   setOperationAction(ISD::SDIV, MVT::i16, Expand);
@@ -96,6 +100,8 @@ SDValue SM83TargetLowering::LowerOperation(SDValue Op,
     return LowerSELECT_CC(Op, DAG);
   case ISD::SETCC:
     return LowerSETCC(Op, DAG);
+  case ISD::MUL:
+    return LowerMUL(Op, DAG);
   default:
     report_fatal_error("SM83: unimplemented operand");
   }
@@ -121,6 +127,74 @@ SDValue SM83TargetLowering::LowerExternalSymbol(SDValue Op,
   return DAG.getNode(SM83ISD::WRAPPER, DL, VT, Result);
 }
 
+SDValue SM83TargetLowering::LowerMUL(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue LHS = Op.getOperand(0);
+  SDValue RHS = Op.getOperand(1);
+
+  // Lower i8 multiply to a call to __mulqi3(i8, i8) -> i8.
+  Type *I8Ty = Type::getInt8Ty(*DAG.getContext());
+  TargetLowering::ArgListTy Args;
+  Args.push_back(TargetLowering::ArgListEntry(LHS, I8Ty));
+  Args.push_back(TargetLowering::ArgListEntry(RHS, I8Ty));
+
+  SDValue Callee = DAG.getExternalSymbol("__mulqi3", MVT::i16);
+  TargetLowering::CallLoweringInfo CLI(DAG);
+  CLI.setDebugLoc(DL).setChain(DAG.getEntryNode()).setCallee(
+      CallingConv::C, Type::getInt8Ty(*DAG.getContext()), Callee,
+      std::move(Args));
+
+  std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
+  return CallResult.first;
+}
+
+// Map ISD condition code to SM83 condition code (NZ=0, Z=1, NC=2, C=3).
+// May swap LHS/RHS to handle ugt/ule/sgt/sle by converting to ult/uge/slt/sge.
+// For signed comparisons, we XOR both operands with 0x80 to convert to unsigned.
+static unsigned mapCondCode(ISD::CondCode CC, SDValue &LHS, SDValue &RHS,
+                            SelectionDAG &DAG, const SDLoc &DL,
+                            bool &NeedSignFlip) {
+  NeedSignFlip = false;
+  switch (CC) {
+  case ISD::SETEQ:  return 1; // Z
+  case ISD::SETNE:  return 0; // NZ
+  case ISD::SETULT: return 3; // C (LHS < RHS unsigned)
+  case ISD::SETUGE: return 2; // NC (LHS >= RHS unsigned)
+  case ISD::SETUGT: // swap to ult
+    std::swap(LHS, RHS);
+    return 3; // C
+  case ISD::SETULE: // swap to uge
+    std::swap(LHS, RHS);
+    return 2; // NC
+  case ISD::SETLT:  // signed: flip sign bits, then use unsigned
+    NeedSignFlip = true;
+    return 3; // C
+  case ISD::SETGE:
+    NeedSignFlip = true;
+    return 2; // NC
+  case ISD::SETGT:
+    NeedSignFlip = true;
+    std::swap(LHS, RHS);
+    return 3; // C
+  case ISD::SETLE:
+    NeedSignFlip = true;
+    std::swap(LHS, RHS);
+    return 2; // NC
+  default:
+    report_fatal_error("SM83: unsupported condition code");
+  }
+}
+
+// Apply sign flip: XOR both operands with 0x80 to convert signed compare
+// to unsigned. This works because flipping the sign bit maps the signed
+// range [-128,127] to unsigned [0,255] preserving order.
+static void applySignFlip(SDValue &LHS, SDValue &RHS, SelectionDAG &DAG,
+                          const SDLoc &DL) {
+  SDValue Flip = DAG.getConstant(0x80, DL, MVT::i8);
+  LHS = DAG.getNode(ISD::XOR, DL, MVT::i8, LHS, Flip);
+  RHS = DAG.getNode(ISD::XOR, DL, MVT::i8, RHS, Flip);
+}
+
 SDValue SM83TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
   SDValue Chain = Op.getOperand(0);
@@ -129,31 +203,20 @@ SDValue SM83TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDValue RHS = Op.getOperand(3);
   SDValue Dest = Op.getOperand(4);
 
-  // Emit comparison: SM83ISD::CMP (sets flags).
-  SDValue Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
-
-  // Map ISD condition codes to SM83 condition codes.
-  // SM83 conditions: NZ=0, Z=1, NC=2, C=3
-  unsigned SM83CC;
-  switch (CC) {
-  case ISD::SETEQ:
-    SM83CC = 1; // Z
-    break;
-  case ISD::SETNE:
-    SM83CC = 0; // NZ
-    break;
-  case ISD::SETULT:
-    SM83CC = 3; // C
-    break;
-  case ISD::SETUGE:
-    SM83CC = 2; // NC
-    break;
-  default:
-    // For other conditions, we need more complex lowering.
-    // For now, use library calls or expand.
-    report_fatal_error("SM83: unsupported branch condition");
+  // If comparing i16, truncate to i8 for the CMP instruction.
+  // For EQ/NE against 0, we OR lo|hi and compare result.
+  // For other cases, truncate (handles boolean select lowering).
+  if (LHS.getValueType() == MVT::i16) {
+    LHS = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, LHS);
+    RHS = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, RHS);
   }
 
+  bool NeedSignFlip;
+  unsigned SM83CC = mapCondCode(CC, LHS, RHS, DAG, DL, NeedSignFlip);
+  if (NeedSignFlip)
+    applySignFlip(LHS, RHS, DAG, DL);
+
+  SDValue Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
   SDValue CCVal = DAG.getConstant(SM83CC, DL, MVT::i8);
   return DAG.getNode(SM83ISD::BRCOND, DL, MVT::Other, Chain, Dest, CCVal, Cmp);
 }
@@ -167,18 +230,17 @@ SDValue SM83TargetLowering::LowerSELECT_CC(SDValue Op,
   SDValue FalseVal = Op.getOperand(3);
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(4))->get();
 
-  SDValue Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
-
-  unsigned SM83CC;
-  switch (CC) {
-  case ISD::SETEQ:  SM83CC = 1; break;
-  case ISD::SETNE:  SM83CC = 0; break;
-  case ISD::SETULT: SM83CC = 3; break;
-  case ISD::SETUGE: SM83CC = 2; break;
-  default:
-    report_fatal_error("SM83: unsupported select condition");
+  if (LHS.getValueType() == MVT::i16) {
+    LHS = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, LHS);
+    RHS = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, RHS);
   }
 
+  bool NeedSignFlip;
+  unsigned SM83CC = mapCondCode(CC, LHS, RHS, DAG, DL, NeedSignFlip);
+  if (NeedSignFlip)
+    applySignFlip(LHS, RHS, DAG, DL);
+
+  SDValue Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
   SDValue CCVal = DAG.getConstant(SM83CC, DL, MVT::i8);
   return DAG.getNode(SM83ISD::SELECT_CC, DL, Op.getValueType(),
                      TrueVal, FalseVal, CCVal, Cmp);
@@ -190,17 +252,17 @@ SDValue SM83TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
   SDValue RHS = Op.getOperand(1);
   ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(2))->get();
 
-  SDValue Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
-
-  unsigned SM83CC;
-  switch (CC) {
-  case ISD::SETEQ:  SM83CC = 1; break;
-  case ISD::SETNE:  SM83CC = 0; break;
-  case ISD::SETULT: SM83CC = 3; break;
-  case ISD::SETUGE: SM83CC = 2; break;
-  default:
-    report_fatal_error("SM83: unsupported setcc condition");
+  if (LHS.getValueType() == MVT::i16) {
+    LHS = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, LHS);
+    RHS = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, RHS);
   }
+
+  bool NeedSignFlip;
+  unsigned SM83CC = mapCondCode(CC, LHS, RHS, DAG, DL, NeedSignFlip);
+  if (NeedSignFlip)
+    applySignFlip(LHS, RHS, DAG, DL);
+
+  SDValue Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
 
   SDValue CCVal = DAG.getConstant(SM83CC, DL, MVT::i8);
   SDValue Zero = DAG.getConstant(0, DL, MVT::i8);

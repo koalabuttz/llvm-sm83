@@ -56,7 +56,11 @@ private:
   bool expandLOAD8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandSTORE8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandADD16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
-  bool expandSUB16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandBitwise16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+                       unsigned LoOpc, unsigned HiOpc);
+  bool expandSHL16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandLOAD16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandSTORE16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLOAD_STACK8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandSTORE_STACK8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
 };
@@ -100,8 +104,14 @@ bool SM83ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case SM83::BRCONDcc: return expandBRCOND(MBB, MI);
   case SM83::LOAD8: return expandLOAD8(MBB, MI);
   case SM83::STORE8: return expandSTORE8(MBB, MI);
+  case SM83::LOAD16: return expandLOAD16(MBB, MI);
+  case SM83::STORE16: return expandSTORE16(MBB, MI);
   case SM83::ADD16rr: return expandADD16(MBB, MI);
-  case SM83::SUB16rr: return expandSUB16(MBB, MI);
+  case SM83::SUB16rr: return expandBitwise16(MBB, MI, SM83::SUBr, SM83::SBCr);
+  case SM83::AND16rr: return expandBitwise16(MBB, MI, SM83::ANDr, SM83::ANDr);
+  case SM83::OR16rr:  return expandBitwise16(MBB, MI, SM83::ORr, SM83::ORr);
+  case SM83::XOR16rr: return expandBitwise16(MBB, MI, SM83::XORr, SM83::XORr);
+  case SM83::SHL16rr: return expandSHL16(MBB, MI);
   case SM83::LOAD_STACK8: return expandLOAD_STACK8(MBB, MI);
   case SM83::STORE_STACK8: return expandSTORE_STACK8(MBB, MI);
   case SM83::LOAD_FI8: return expandLOAD_STACK8(MBB, MI);
@@ -210,8 +220,9 @@ bool SM83ExpandPseudo::expandADD16(MachineBasicBlock &MBB,
   return true;
 }
 
-bool SM83ExpandPseudo::expandSUB16(MachineBasicBlock &MBB,
-                                   MachineBasicBlock::iterator MI) {
+bool SM83ExpandPseudo::expandBitwise16(MachineBasicBlock &MBB,
+                                       MachineBasicBlock::iterator MI,
+                                       unsigned LoOpc, unsigned HiOpc) {
   DebugLoc DL = MI->getDebugLoc();
   Register DstReg = MI->getOperand(0).getReg();
   Register Src1Reg = MI->getOperand(1).getReg();
@@ -225,14 +236,78 @@ bool SM83ExpandPseudo::expandSUB16(MachineBasicBlock &MBB,
   Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
   Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
 
-  // Sub low bytes: LD A, src1.lo / SUB src2.lo / LD dst.lo, A
+  // Low bytes: LD A, src1.lo / OP src2.lo / LD dst.lo, A
   BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::A).addReg(Src1Lo);
-  BuildMI(MBB, MI, DL, TII->get(SM83::SUBr)).addReg(Src2Lo);
+  BuildMI(MBB, MI, DL, TII->get(LoOpc)).addReg(Src2Lo);
   BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SM83::A);
-  // Sub high bytes with carry: LD A, src1.hi / SBC A, src2.hi / LD dst.hi, A
+  // High bytes: LD A, src1.hi / OP src2.hi / LD dst.hi, A
   BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::A).addReg(Src1Hi);
-  BuildMI(MBB, MI, DL, TII->get(SM83::SBCr)).addReg(Src2Hi);
+  BuildMI(MBB, MI, DL, TII->get(HiOpc)).addReg(Src2Hi);
   BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstHi).addReg(SM83::A);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandSHL16(MachineBasicBlock &MBB,
+                                   MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register DstReg = MI->getOperand(0).getReg();
+  Register SrcReg = MI->getOperand(1).getReg();
+  const SM83RegisterInfo &RI = TII->getRegisterInfo();
+
+  Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
+  Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
+  Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
+  Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
+
+  // Copy src to dst, then shift by 1: SLA lo, RL hi.
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SrcLo);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstHi).addReg(SrcHi);
+  BuildMI(MBB, MI, DL, TII->get(SM83::SLAr), DstLo).addReg(DstLo);
+  BuildMI(MBB, MI, DL, TII->get(SM83::RLr), DstHi).addReg(DstHi);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandLOAD16(MachineBasicBlock &MBB,
+                                    MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register DstReg = MI->getOperand(0).getReg();
+  MachineOperand &Addr = MI->getOperand(1);
+  const SM83RegisterInfo &RI = TII->getRegisterInfo();
+  Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
+  Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
+
+  // LD HL, addr / LD lo, (HL+) / LD hi, (HL)
+  // Use HL+ (auto-increment) for efficiency.
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrri), SM83::HL).add(Addr);
+  // Load low byte via HL+, then high byte.
+  // SM83 LD A,(HL+) auto-increments HL — but only A can do this.
+  // So: LD A,(HL+) / LD dst.lo,A / LD dst.hi,(HL)
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDA_HLI));
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SM83::A);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrHL), DstHi);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandSTORE16(MachineBasicBlock &MBB,
+                                     MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register SrcReg = MI->getOperand(0).getReg();
+  MachineOperand &Addr = MI->getOperand(1);
+  const SM83RegisterInfo &RI = TII->getRegisterInfo();
+  Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
+  Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
+
+  // LD HL, addr / LD A, src.lo / LD (HL+),A / LD (HL), src.hi
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrri), SM83::HL).add(Addr);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::A).addReg(SrcLo);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLI_A));
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLr)).addReg(SrcHi);
 
   MI->eraseFromParent();
   return true;

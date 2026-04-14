@@ -178,6 +178,36 @@ def SUB16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
                      "# SUB16 $dst, $src1, $src2",
                      [(set i16:$dst, (sub i16:$src1, i16:$src2))]>;
 
+// i16 bitwise pseudos — lo/hi byte decomposition.
+let Defs = [F] in {
+def AND16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
+                     "# AND16 $dst, $src1, $src2",
+                     [(set i16:$dst, (and i16:$src1, i16:$src2))]>;
+def OR16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
+                    "# OR16 $dst, $src1, $src2",
+                    [(set i16:$dst, (or i16:$src1, i16:$src2))]>;
+def XOR16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
+                     "# XOR16 $dst, $src1, $src2",
+                     [(set i16:$dst, (xor i16:$src1, i16:$src2))]>;
+}
+
+// i16 shift left pseudo — SLA lo, RL hi (shift by 1).
+let Defs = [F] in
+def SHL16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src, GPR8:$amt),
+                     "# SHL16 $dst, $src, $amt",
+                     [(set i16:$dst, (shl i16:$src, (i8 GPR8:$amt)))]>;
+
+// i16 load/store from global address.
+let mayLoad = 1, hasSideEffects = 0 in
+def LOAD16 : Pseudo<(outs GR16:$dst), (ins i16imm:$addr),
+                    "# LOAD16 $dst, [$addr]",
+                    [(set i16:$dst, (load (SM83Wrapper tglobaladdr:$addr)))]>;
+
+let mayStore = 1, hasSideEffects = 0 in
+def STORE16 : Pseudo<(outs), (ins GR16:$src, i16imm:$addr),
+                     "# STORE16 [$addr], $src",
+                     [(store i16:$src, (SM83Wrapper tglobaladdr:$addr))]>;
+
 //===----------------------------------------------------------------------===//
 // NOP / HALT / STOP / DI / EI / DAA / CPL / SCF / CCF
 //===----------------------------------------------------------------------===//
