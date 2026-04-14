@@ -89,6 +89,30 @@ def SELECT8 : Pseudo<(outs GPR8:$dst),
                      [(set i8:$dst,
                        (SM83selectcc i8:$src1, i8:$src2, imm:$cc))]>;
 
+// Load/Store pseudos for global address access.
+// These expand to: LD HL, addr / LD r, (HL)  or  LD HL, addr / LD (HL), r
+let mayLoad = 1, hasSideEffects = 0 in
+def LOAD8 : Pseudo<(outs GPR8:$dst), (ins i16imm:$addr),
+                   "# LOAD8 $dst, [$addr]",
+                   [(set i8:$dst, (load (SM83Wrapper tglobaladdr:$addr)))]>;
+
+let mayStore = 1, hasSideEffects = 0 in
+def STORE8 : Pseudo<(outs), (ins GPR8:$src, i16imm:$addr),
+                    "# STORE8 [$addr], $src",
+                    [(store i8:$src, (SM83Wrapper tglobaladdr:$addr))]>;
+
+// CMP pseudo — expanded to LD A, src1 / CP src2. Sets flags.
+let Defs = [F] in
+def CMP8rr : Pseudo<(outs), (ins GPR8:$lhs, GPR8:$rhs),
+                    "# CMP8 $lhs, $rhs",
+                    [(SM83cmp i8:$lhs, i8:$rhs)]>;
+
+// BRCOND pseudo — conditional branch based on flags.
+let isBranch = 1, isTerminator = 1, Uses = [F] in
+def BRCONDcc : Pseudo<(outs), (ins brtarget:$target, i8imm:$cc),
+                      "# BRCOND $target, $cc",
+                      [(SM83brcond bb:$target, imm:$cc)]>;
+
 //===----------------------------------------------------------------------===//
 // i8 ALU pseudo instructions (expanded to LD A + ALU + result in A)
 // These exist because SM83's ALU works through the accumulator, but
@@ -561,14 +585,19 @@ def JPHL : SM83Inst8<(outs), (ins), "jp\thl", []>;
 
 // CALL
 let isCall = 1, Defs = [SP], Uses = [SP], hasSideEffects = 0 in {
-def CALL : SM83Inst24<(outs), (ins i16imm:$target),
-                      "call\t$target", []>;
+def CALL : SM83Inst24<(outs), (ins i16imm:$target, variable_ops),
+                      "call\t$target",
+                      [(SM83call imm:$target)]>;
 
 def CALLcc : SM83Inst24<(outs), (ins i8imm:$cc, i16imm:$target),
                         "call\t$cc, $target", []> {
   let Uses = [SP, F];
 }
 }
+
+// Call patterns for global address and external symbol targets.
+def : Pat<(SM83call (i16 tglobaladdr:$dst)), (CALL tglobaladdr:$dst)>;
+def : Pat<(SM83call (i16 texternalsym:$dst)), (CALL texternalsym:$dst)>;
 
 // RET
 let isReturn = 1, isTerminator = 1, isBarrier = 1,

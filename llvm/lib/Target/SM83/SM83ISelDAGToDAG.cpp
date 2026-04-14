@@ -39,7 +39,6 @@ public:
 
 private:
   void Select(SDNode *N) override;
-  bool selectCall(SDNode *N);
 };
 
 class SM83DAGToDAGISelLegacy : public SelectionDAGISelLegacy {
@@ -57,46 +56,7 @@ char SM83DAGToDAGISelLegacy::ID = 0;
 INITIALIZE_PASS(SM83DAGToDAGISelLegacy, DEBUG_TYPE, PASS_NAME, false, false)
 
 void SM83DAGToDAGISel::Select(SDNode *N) {
-  unsigned Opcode = N->getOpcode();
-
-  if (Opcode >= ISD::BUILTIN_OP_END &&
-      Opcode < (ISD::BUILTIN_OP_END + 100)) {
-    // Custom SM83 nodes — handle CALL specifically.
-    switch (Opcode) {
-    case SM83ISD::CALL:
-      if (selectCall(N))
-        return;
-      break;
-    default:
-      break;
-    }
-  }
-
-  // Default to TableGen-generated patterns.
   SelectCode(N);
-}
-
-bool SM83DAGToDAGISel::selectCall(SDNode *N) {
-  SDLoc DL(N);
-
-  // Operands: chain, callee, [reg args...], regmask, [glue]
-  SDValue Chain = N->getOperand(0);
-  SDValue Callee = N->getOperand(1);
-
-  SmallVector<SDValue, 8> Ops;
-  Ops.push_back(Callee);
-
-  // Pass through all remaining operands (reg args, regmask, glue).
-  for (unsigned i = 2, e = N->getNumOperands(); i != e; ++i)
-    Ops.push_back(N->getOperand(i));
-
-  // Add chain as the last operand.
-  Ops.push_back(Chain);
-
-  SDNode *Call = CurDAG->getMachineNode(SM83::CALL, DL,
-                                        MVT::Other, MVT::Glue, Ops);
-  ReplaceNode(N, Call);
-  return true;
 }
 
 FunctionPass *llvm::createSM83ISelDag(SM83TargetMachine &TM,
