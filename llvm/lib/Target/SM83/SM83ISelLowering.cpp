@@ -99,6 +99,11 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   setOperationAction(ISD::SREM, MVT::i16, Expand);
   setOperationAction(ISD::UREM, MVT::i8, Expand);
   setOperationAction(ISD::UREM, MVT::i16, Expand);
+  // DAG combiner merges UDIV+UREM into UDIVREM; must Expand or it falls through.
+  setOperationAction(ISD::UDIVREM, MVT::i8, Expand);
+  setOperationAction(ISD::SDIVREM, MVT::i8, Expand);
+  setOperationAction(ISD::UDIVREM, MVT::i16, Expand);
+  setOperationAction(ISD::SDIVREM, MVT::i16, Expand);
   setOperationAction(ISD::MULHS, MVT::i8, Expand);
   setOperationAction(ISD::MULHU, MVT::i8, Expand);
   setOperationAction(ISD::SMUL_LOHI, MVT::i8, Expand);
@@ -109,6 +114,7 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   setOperationAction(ISD::UMUL_LOHI, MVT::i16, Expand);
 
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1, Expand);
+  setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i8, Expand);
   setOperationAction(ISD::ROTL, MVT::i8, Expand);
   setOperationAction(ISD::ROTR, MVT::i8, Expand);
   setOperationAction(ISD::ROTL, MVT::i16, Expand);
@@ -116,10 +122,24 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   setOperationAction(ISD::CTPOP, MVT::i8, Expand);
   setOperationAction(ISD::CTLZ, MVT::i8, Expand);
   setOperationAction(ISD::CTTZ, MVT::i8, Expand);
+  setOperationAction(ISD::CTLZ_ZERO_UNDEF, MVT::i8, Expand);
+  setOperationAction(ISD::CTTZ_ZERO_UNDEF, MVT::i8, Expand);
   setOperationAction(ISD::CTPOP, MVT::i16, Expand);
   setOperationAction(ISD::CTLZ, MVT::i16, Expand);
   setOperationAction(ISD::CTTZ, MVT::i16, Expand);
+  setOperationAction(ISD::CTLZ_ZERO_UNDEF, MVT::i16, Expand);
+  setOperationAction(ISD::CTTZ_ZERO_UNDEF, MVT::i16, Expand);
   setOperationAction(ISD::BSWAP, MVT::i16, Expand);
+  setOperationAction(ISD::ABS, MVT::i8, Expand);
+  setOperationAction(ISD::ABS, MVT::i16, Expand);
+  setOperationAction(ISD::SMIN, MVT::i8, Expand);
+  setOperationAction(ISD::SMAX, MVT::i8, Expand);
+  setOperationAction(ISD::UMIN, MVT::i8, Expand);
+  setOperationAction(ISD::UMAX, MVT::i8, Expand);
+  setOperationAction(ISD::SMIN, MVT::i16, Expand);
+  setOperationAction(ISD::SMAX, MVT::i16, Expand);
+  setOperationAction(ISD::UMIN, MVT::i16, Expand);
+  setOperationAction(ISD::UMAX, MVT::i16, Expand);
 
   setOperationAction(ISD::SHL_PARTS, MVT::i8, Expand);
   setOperationAction(ISD::SRA_PARTS, MVT::i8, Expand);
@@ -128,13 +148,20 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   setOperationAction(ISD::SRA_PARTS, MVT::i16, Expand);
   setOperationAction(ISD::SRL_PARTS, MVT::i16, Expand);
 
-  // i32 arithmetic — LLVM decomposes to i16 pairs.
+  // SM83 has no varargs support.
+  setOperationAction(ISD::VAARG,  MVT::Other, Expand);
+  setOperationAction(ISD::VAEND,  MVT::Other, Expand);
+  setOperationAction(ISD::VACOPY, MVT::Other, Expand);
+
+  // i32/i64 arithmetic — LLVM decomposes to i16 pairs via libcalls.
   for (auto VT : {MVT::i32, MVT::i64}) {
     setOperationAction(ISD::MUL, VT, Expand);
     setOperationAction(ISD::SDIV, VT, Expand);
     setOperationAction(ISD::UDIV, VT, Expand);
     setOperationAction(ISD::SREM, VT, Expand);
     setOperationAction(ISD::UREM, VT, Expand);
+    setOperationAction(ISD::UDIVREM, VT, Expand);
+    setOperationAction(ISD::SDIVREM, VT, Expand);
     setOperationAction(ISD::MULHS, VT, Expand);
     setOperationAction(ISD::MULHU, VT, Expand);
     setOperationAction(ISD::SMUL_LOHI, VT, Expand);
@@ -147,7 +174,14 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
     setOperationAction(ISD::CTPOP, VT, Expand);
     setOperationAction(ISD::CTLZ, VT, Expand);
     setOperationAction(ISD::CTTZ, VT, Expand);
+    setOperationAction(ISD::CTLZ_ZERO_UNDEF, VT, Expand);
+    setOperationAction(ISD::CTTZ_ZERO_UNDEF, VT, Expand);
     setOperationAction(ISD::BSWAP, VT, Expand);
+    setOperationAction(ISD::ABS,   VT, Expand);
+    setOperationAction(ISD::SMIN,  VT, Expand);
+    setOperationAction(ISD::SMAX,  VT, Expand);
+    setOperationAction(ISD::UMIN,  VT, Expand);
+    setOperationAction(ISD::UMAX,  VT, Expand);
     setOperationAction(ISD::SIGN_EXTEND_INREG, VT, Expand);
   }
 

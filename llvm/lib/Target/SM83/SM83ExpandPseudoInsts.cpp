@@ -504,11 +504,13 @@ bool SM83ExpandPseudo::expandLOAD_PTR16(MachineBasicBlock &MBB,
   const SM83RegisterInfo &RI = TII->getRegisterInfo();
   Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
   Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
+  assert(DstLo && DstHi && "DST reg missing sub_lo/sub_hi in LOAD_PTR16 expansion");
 
   // Copy ptr to HL if not already there.
   if (PtrReg != SM83::HL) {
     Register PtrLo = RI.getSubReg(PtrReg, SM83::sub_lo);
     Register PtrHi = RI.getSubReg(PtrReg, SM83::sub_hi);
+    assert(PtrLo && PtrHi && "PTR reg missing sub_lo/sub_hi in LOAD_PTR16 expansion");
     BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::L).addReg(PtrLo);
     BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::H).addReg(PtrHi);
   }
@@ -529,11 +531,13 @@ bool SM83ExpandPseudo::expandSTORE_PTR16(MachineBasicBlock &MBB,
   const SM83RegisterInfo &RI = TII->getRegisterInfo();
   Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
   Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
+  assert(SrcLo && SrcHi && "SRC reg missing sub_lo/sub_hi in STORE_PTR16 expansion");
 
   // Copy ptr to HL if not already there.
   if (PtrReg != SM83::HL) {
     Register PtrLo = RI.getSubReg(PtrReg, SM83::sub_lo);
     Register PtrHi = RI.getSubReg(PtrReg, SM83::sub_hi);
+    assert(PtrLo && PtrHi && "PTR reg missing sub_lo/sub_hi in STORE_PTR16 expansion");
     BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::L).addReg(PtrLo);
     BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::H).addReg(PtrHi);
   }
@@ -554,6 +558,7 @@ bool SM83ExpandPseudo::expandLOAD_FI16(MachineBasicBlock &MBB,
   const SM83RegisterInfo &RI = TII->getRegisterInfo();
   Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
   Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
+  assert(DstLo && DstHi && "DST reg missing sub_lo/sub_hi in LOAD_FI16 expansion");
 
   // LD HL, SP + offset; LD lo, (HL); INC HL; LD hi, (HL)
   BuildMI(MBB, MI, DL, TII->get(SM83::LDHLSP)).add(FI);
@@ -573,6 +578,7 @@ bool SM83ExpandPseudo::expandSTORE_FI16(MachineBasicBlock &MBB,
   const SM83RegisterInfo &RI = TII->getRegisterInfo();
   Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
   Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
+  assert(SrcLo && SrcHi && "SRC reg missing sub_lo/sub_hi in STORE_FI16 expansion");
 
   // LD HL, SP + offset; LD (HL), lo; INC HL; LD (HL), hi
   BuildMI(MBB, MI, DL, TII->get(SM83::LDHLSP)).add(FI);
@@ -640,6 +646,8 @@ bool SM83ExpandPseudo::expandCMPC16rr(MachineBasicBlock &MBB,
   Register LHSHi = RI.getSubReg(LHSReg, SM83::sub_hi);
   Register RHSLo = RI.getSubReg(RHSReg, SM83::sub_lo);
   Register RHSHi = RI.getSubReg(RHSReg, SM83::sub_hi);
+  assert(LHSLo && LHSHi && "LHS reg missing sub_lo/sub_hi in CMPC16rr expansion");
+  assert(RHSLo && RHSHi && "RHS reg missing sub_lo/sub_hi in CMPC16rr expansion");
 
   // LD A, lhs.lo; SBC A, rhs.lo (uses carry from previous compare in chain)
   emitLD(MBB, MI, DL, SM83::A, LHSLo);
@@ -663,6 +671,8 @@ bool SM83ExpandPseudo::expandSRL16(MachineBasicBlock &MBB,
   Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
   Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
   Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
+  assert(SrcLo && SrcHi && "SRC reg missing sub_lo/sub_hi in SRL16 expansion");
+  assert(DstLo && DstHi && "DST reg missing sub_lo/sub_hi in SRL16 expansion");
 
   // Copy src to dst, then shift by 1: SRL hi, RR lo.
   BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SrcLo);
@@ -685,6 +695,8 @@ bool SM83ExpandPseudo::expandSRA16(MachineBasicBlock &MBB,
   Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
   Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
   Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
+  assert(SrcLo && SrcHi && "SRC reg missing sub_lo/sub_hi in SRA16 expansion");
+  assert(DstLo && DstHi && "DST reg missing sub_lo/sub_hi in SRA16 expansion");
 
   // Copy src to dst, then shift by 1: SRA hi, RR lo.
   BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SrcLo);
