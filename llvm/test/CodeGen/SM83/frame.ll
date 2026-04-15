@@ -28,6 +28,21 @@ define i8 @with_locals(i8 %x, i8 %y) {
   ret i8 %r
 }
 
+; Large frame: %var is pushed beyond SP+127 by the 200-byte padding alloca,
+; so eliminateFrameIndex produces an out-of-range offset.  The expand pass
+; must emit LD HL, imm16 + ADD HL, SP instead of LDHLSP.
+define void @large_frame() {
+; CHECK-LABEL: large_frame:
+; CHECK:       ld hl, 200
+; CHECK-NEXT:  add hl, sp
+; CHECK-NEXT:  ld [hl], a
+  %var = alloca i8
+  %pad = alloca [200 x i8], align 1
+  store volatile i8 0, ptr %pad
+  store volatile i8 42, ptr %var
+  ret void
+}
+
 ; Test i16 local variable (alloca i16).
 define i16 @i16_local(i16 %x) {
 ; CHECK-LABEL: i16_local:

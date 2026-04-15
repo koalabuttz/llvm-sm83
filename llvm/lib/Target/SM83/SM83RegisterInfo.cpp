@@ -9,15 +9,11 @@
 #include "SM83RegisterInfo.h"
 
 #include "llvm/ADT/BitVector.h"
-#include "llvm/ADT/Twine.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
-#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/TargetFrameLowering.h"
-#include "llvm/Support/ErrorHandling.h"
 
 #include "SM83.h"
-#include "SM83InstrInfo.h"
 #include "SM83TargetMachine.h"
 #include "MCTargetDesc/SM83MCTargetDesc.h"
 
@@ -62,8 +58,6 @@ bool SM83RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   const MachineFunction &MF = *MBB.getParent();
   const MachineFrameInfo &MFI = MF.getFrameInfo();
   const TargetFrameLowering *TFI = MF.getSubtarget().getFrameLowering();
-  const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
-  DebugLoc DL = MI.getDebugLoc();
 
   int FrameIndex = MI.getOperand(FIOperandNum).getIndex();
   int Offset = MFI.getObjectOffset(FrameIndex);
@@ -74,23 +68,10 @@ bool SM83RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
       MI.getOperand(FIOperandNum + 1).isImm())
     Offset += MI.getOperand(FIOperandNum + 1).getImm();
 
-  // For SM83, stack access goes through HL.
-  // Load HL = SP + offset, then use (HL) for the actual load/store.
-  // This is done by the LDHLSP instruction which does LD HL, SP+imm8s.
-  // If offset fits in signed 8-bit, use LDHLSP directly.
-  // Otherwise, we need a longer sequence.
-
-  // LDHLSP encodes a signed 8-bit offset (range -128..127).  Frames larger
-  // than ~127 bytes of locals require a multi-instruction sequence that is
-  // not yet implemented.  Fail loudly rather than silently truncating.
-  if (Offset < -128 || Offset > 127)
-    report_fatal_error("SM83: frame index offset " + Twine(Offset) +
-                       " out of range [-128,127]; function stack frame is"
-                       " too large (~127 byte limit on locals)");
-
   // Replace the frame index with the computed SP-relative offset.
-  // The pseudo expansion (LOAD_STACK8, STORE_STACK8, LOAD_FI16, etc.)
-  // passes this operand directly to LDHLSP which expects an immediate.
+  // The pseudo expansion (LOAD_STACK8, STORE_STACK8, LOAD_FI16, etc.) checks
+  // whether the offset fits in a signed 8-bit immediate and chooses between
+  // LDHLSP (short path, -128..127) and LDrri+ADDHLrr (large frame path).
   MI.getOperand(FIOperandNum).ChangeToImmediate(Offset);
 
   return false;

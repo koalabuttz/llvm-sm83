@@ -298,15 +298,24 @@ bool SM83ExpandPseudo::expandSTORE16(MachineBasicBlock &MBB,
   return true;
 }
 
+// Emit either LDHLSP (offset fits in s8) or LDrri+ADDHLrr (large frame).
+static void emitLoadHLSP(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+                         DebugLoc DL, const SM83InstrInfo *TII, int64_t Offset) {
+  if (Offset >= -128 && Offset <= 127) {
+    BuildMI(MBB, MI, DL, TII->get(SM83::LDHLSP)).addImm(Offset);
+  } else {
+    BuildMI(MBB, MI, DL, TII->get(SM83::LDrri), SM83::HL).addImm(Offset);
+    BuildMI(MBB, MI, DL, TII->get(SM83::ADDHLrr)).addReg(SM83::SP);
+  }
+}
+
 bool SM83ExpandPseudo::expandLOAD_STACK8(MachineBasicBlock &MBB,
                                          MachineBasicBlock::iterator MI) {
   DebugLoc DL = MI->getDebugLoc();
   Register DstReg = MI->getOperand(0).getReg();
-  MachineOperand &OffsetOp = MI->getOperand(1);
+  int64_t Offset = MI->getOperand(1).getImm();
 
-  // LD HL, SP + offset
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLSP))
-      .add(OffsetOp);
+  emitLoadHLSP(MBB, MI, DL, TII, Offset);
   // LD dst, (HL)
   BuildMI(MBB, MI, DL, TII->get(SM83::LDrHL), DstReg);
 
@@ -318,14 +327,11 @@ bool SM83ExpandPseudo::expandSTORE_STACK8(MachineBasicBlock &MBB,
                                           MachineBasicBlock::iterator MI) {
   DebugLoc DL = MI->getDebugLoc();
   Register SrcReg = MI->getOperand(0).getReg();
-  MachineOperand &OffsetOp = MI->getOperand(1);
+  int64_t Offset = MI->getOperand(1).getImm();
 
-  // LD HL, SP + offset
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLSP))
-      .add(OffsetOp);
+  emitLoadHLSP(MBB, MI, DL, TII, Offset);
   // LD (HL), src
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLr))
-      .addReg(SrcReg);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLr)).addReg(SrcReg);
 
   MI->eraseFromParent();
   return true;
@@ -508,7 +514,7 @@ bool SM83ExpandPseudo::expandLOAD_FI16(MachineBasicBlock &MBB,
   assert(DstLo && DstHi && "DST reg missing sub_lo/sub_hi in LOAD_FI16 expansion");
 
   // LD HL, SP + offset; LD lo, (HL); INC HL; LD hi, (HL)
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLSP)).add(FI);
+  emitLoadHLSP(MBB, MI, DL, TII, FI.getImm());
   BuildMI(MBB, MI, DL, TII->get(SM83::LDrHL), DstLo);
   BuildMI(MBB, MI, DL, TII->get(SM83::INCrr), SM83::HL).addReg(SM83::HL);
   BuildMI(MBB, MI, DL, TII->get(SM83::LDrHL), DstHi);
@@ -528,7 +534,7 @@ bool SM83ExpandPseudo::expandSTORE_FI16(MachineBasicBlock &MBB,
   assert(SrcLo && SrcHi && "SRC reg missing sub_lo/sub_hi in STORE_FI16 expansion");
 
   // LD HL, SP + offset; LD (HL), lo; INC HL; LD (HL), hi
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLSP)).add(FI);
+  emitLoadHLSP(MBB, MI, DL, TII, FI.getImm());
   BuildMI(MBB, MI, DL, TII->get(SM83::LDHLr)).addReg(SrcLo);
   BuildMI(MBB, MI, DL, TII->get(SM83::INCrr), SM83::HL).addReg(SM83::HL);
   BuildMI(MBB, MI, DL, TII->get(SM83::LDHLr)).addReg(SrcHi);
