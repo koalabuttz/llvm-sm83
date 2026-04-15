@@ -101,6 +101,17 @@ void SM83InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     return;
   }
 
+  // i16 pair → i8 copy (e.g., BC → D): extract the low byte.
+  if (SM83::GPR8RegClass.contains(DestReg) &&
+      SM83::GR16RegClass.contains(SrcReg)) {
+    Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
+    if (SrcLo) {
+      BuildMI(MBB, MI, DL, get(SM83::LDrr), DestReg)
+          .addReg(SrcLo, getKillRegState(KillSrc));
+      return;
+    }
+  }
+
   // Provide detailed error for debugging.
   errs() << "SM83 copyPhysReg failure: dest=" << printReg(DestReg, &RI)
          << " src=" << printReg(SrcReg, &RI) << "\n";
