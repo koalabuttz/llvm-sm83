@@ -259,8 +259,8 @@ DecodeStatus SM83Disassembler::getInstruction(MCInst &Instr, uint64_t &Size,
     return Success;
   }
 
-  // INC r (00 rrr 100)
-  if ((B0 & 0x07) == 0x04 && (B0 >> 3) != 6) {
+  // INC r (00 rrr 100) — only valid in the 0x00-0x3F (00-prefix) range
+  if (B0 < 0x40 && (B0 & 0x07) == 0x04) {
     uint8_t Reg = (B0 >> 3) & 0x07;
     if (Reg == 6) { Instr.setOpcode(SM83::INCm); Size = 1; return Success; }
     if (Reg >= 8) { Size = 1; return Fail; }
@@ -270,10 +270,9 @@ DecodeStatus SM83Disassembler::getInstruction(MCInst &Instr, uint64_t &Size,
     Size = 1;
     return Success;
   }
-  if (B0 == 0x34) { Instr.setOpcode(SM83::INCm); Size = 1; return Success; }
 
-  // DEC r (00 rrr 101)
-  if ((B0 & 0x07) == 0x05 && B0 != 0x35) {
+  // DEC r (00 rrr 101) — only valid in the 0x00-0x3F (00-prefix) range
+  if (B0 < 0x40 && (B0 & 0x07) == 0x05) {
     uint8_t Reg = (B0 >> 3) & 0x07;
     if (Reg == 6) { Instr.setOpcode(SM83::DECm); Size = 1; return Success; }
     Instr.setOpcode(SM83::DECr);
@@ -282,10 +281,9 @@ DecodeStatus SM83Disassembler::getInstruction(MCInst &Instr, uint64_t &Size,
     Size = 1;
     return Success;
   }
-  if (B0 == 0x35) { Instr.setOpcode(SM83::DECm); Size = 1; return Success; }
 
-  // LD r, n (00 rrr 110)
-  if ((B0 & 0x07) == 0x06) {
+  // LD r, n (00 rrr 110) — only valid in the 0x00-0x3F (00-prefix) range
+  if (B0 < 0x40 && (B0 & 0x07) == 0x06) {
     if (Bytes.size() < 2) { Size = 1; return Fail; }
     Size = 2;
     uint8_t Reg = (B0 >> 3) & 0x07;
