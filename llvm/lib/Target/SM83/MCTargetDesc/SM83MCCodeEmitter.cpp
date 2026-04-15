@@ -235,6 +235,12 @@ void SM83MCCodeEmitter::encodeInstruction(const MCInst &MI,
     emit8(CB, 0xF9);
     return;
 
+  // LD SP, imm16 (opcode 0x31)
+  case SM83::LDSPi:
+    emit8(CB, 0x31);
+    emitImm16(MI.getOperand(0), 1, CB, Fixups);
+    return;
+
   // LD (nn), SP
   case SM83::LDnn_SP:
     emit8(CB, 0x08);
@@ -310,6 +316,11 @@ void SM83MCCodeEmitter::encodeInstruction(const MCInst &MI,
     emit8(CB, (Pair << 4) | 0x09);
     return;
   }
+
+  // ADD HL, SP (opcode 0x39)
+  case SM83::ADDHLsp:
+    emit8(CB, 0x39);
+    return;
 
   // ADD SP, signed imm8
   case SM83::ADDSPi:

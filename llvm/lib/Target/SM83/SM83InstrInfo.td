@@ -479,6 +479,14 @@ let Defs = [SP], Uses = [HL], hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
 def LDSPHL : SM83Inst8<(outs), (ins), "ld\tsp, hl", []>;
 
 //===----------------------------------------------------------------------===//
+// LD SP, imm16
+//===----------------------------------------------------------------------===//
+
+let Defs = [SP], hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
+def LDSPi : SM83Inst24<(outs), (ins i16imm:$imm),
+                        "ld\tsp, $imm", []>;
+
+//===----------------------------------------------------------------------===//
 // LD (imm16), SP
 //===----------------------------------------------------------------------===//
 
@@ -592,6 +600,10 @@ def CPm  : SM83Inst8<(outs), (ins), "cp\t[hl]", []>;
 let Defs = [HL, F], Uses = [HL], hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
 def ADDHLrr : SM83Inst8<(outs), (ins GR16:$src),
                         "add\thl, $src", []>;
+
+// ADD HL, SP — separate def since SP is not in GR16.
+let Defs = [HL, F], Uses = [HL, SP], hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
+def ADDHLsp : SM83Inst8<(outs), (ins), "add\thl, sp", []>;
 
 //===----------------------------------------------------------------------===//
 // ADD SP, imm8s

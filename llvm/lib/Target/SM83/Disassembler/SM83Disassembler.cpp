@@ -213,9 +213,14 @@ DecodeStatus SM83Disassembler::getInstruction(MCInst &Instr, uint64_t &Size,
   if ((B0 & 0xCF) == 0x01) {
     if (Bytes.size() < 3) { Size = 1; return Fail; }
     Size = 3;
-    Instr.setOpcode(SM83::LDrri);
     uint8_t Pair = (B0 >> 4) & 0x03;
-    Instr.addOperand(MCOperand::createReg(Reg16Table[Pair]));
+    if (Pair == 3) {
+      // LD SP, nn — separate instruction since SP is not in GR16.
+      Instr.setOpcode(SM83::LDSPi);
+    } else {
+      Instr.setOpcode(SM83::LDrri);
+      Instr.addOperand(MCOperand::createReg(Reg16Table[Pair]));
+    }
     Instr.addOperand(MCOperand::createImm(Bytes[1] | (Bytes[2] << 8)));
     return Success;
   }
@@ -324,8 +329,13 @@ DecodeStatus SM83Disassembler::getInstruction(MCInst &Instr, uint64_t &Size,
   if ((B0 & 0xCF) == 0x09) {
     Size = 1;
     uint8_t Pair = (B0 >> 4) & 0x03;
-    Instr.setOpcode(SM83::ADDHLrr);
-    Instr.addOperand(MCOperand::createReg(Reg16Table[Pair]));
+    if (Pair == 3) {
+      // ADD HL, SP — separate instruction since SP is not in GR16.
+      Instr.setOpcode(SM83::ADDHLsp);
+    } else {
+      Instr.setOpcode(SM83::ADDHLrr);
+      Instr.addOperand(MCOperand::createReg(Reg16Table[Pair]));
+    }
     return Success;
   }
 

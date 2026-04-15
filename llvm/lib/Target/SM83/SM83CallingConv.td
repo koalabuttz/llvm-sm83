@@ -21,13 +21,15 @@
 // This allows returning Option<u8>, (u8,u8), and other small aggregates
 // without spilling to the stack.
 def RetCC_SM83 : CallingConv<[
-  CCIfType<[i8],  CCAssignToReg<[A, C, B, E, D]>>,
-  CCIfType<[i16], CCAssignToReg<[HL, BC, DE]>>
+  CCIfType<[i8],  CCAssignToReg<[A, C, B]>>,
+  CCIfType<[i16], CCAssignToReg<[HL, BC]>>
 ]>;
 
 //===----------------------------------------------------------------------===//
 // Callee-saved register lists.
 //===----------------------------------------------------------------------===//
 
-// Initially all registers are caller-saved (simplest approach).
-def CSR_Normal : CalleeSavedRegs<(add)>;
+// DE is callee-saved.  Functions that use DE save/restore it in the
+// prologue/epilogue.  This significantly reduces spill traffic at call sites.
+// HL is not callee-saved: it is the primary return register and pointer register.
+def CSR_Normal : CalleeSavedRegs<(add DE)>;

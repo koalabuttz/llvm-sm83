@@ -838,9 +838,9 @@ const char *SM83TargetLowering::getTargetNodeName(unsigned Opcode) const {
 // Assign i16 args to: BC, DE only.
 // HL is never used as an argument register so that indirect calls can always
 // safely place the function pointer in HL before CALL __sm83_icall_hl.
-static const MCPhysReg ArgGPR8s[] = {SM83::A, SM83::C, SM83::B,
-                                     SM83::E, SM83::D};
-static const MCPhysReg ArgGPR16s[] = {SM83::BC, SM83::DE};
+// DE is callee-saved, so D/E are not available as argument registers.
+static const MCPhysReg ArgGPR8s[] = {SM83::A, SM83::C, SM83::B};
+static const MCPhysReg ArgGPR16s[] = {SM83::BC};
 
 static bool CC_SM83(unsigned ValNo, MVT ValVT, MVT LocVT,
                     CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,

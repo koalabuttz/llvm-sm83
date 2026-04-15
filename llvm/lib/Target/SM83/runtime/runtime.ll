@@ -6,8 +6,10 @@
 ; Since no SM83 asm parser exists, all functions are expressed in LLVM IR.
 ;
 ; Provides the GCC soft-integer libcall symbols that LLVM emits for targets
-; without native divide/modulo:
+; without native multiply/divide/modulo:
 ;
+;   __mulqi3                — unsigned  8-bit multiply
+;   __mulhi3                — unsigned 16-bit multiply
 ;   __udivhi3 / __umodhi3  — unsigned 16-bit divide / modulo
 ;   __divhi3  / __modhi3   — signed   16-bit divide / modulo
 ;   __udivqi3 / __umodqi3  — unsigned  8-bit divide / modulo
@@ -22,10 +24,75 @@
 ; = ~160 bytes for 16-bit divide, ~80 bytes for 8-bit.  No worst-case blowup.
 ;
 ; SM83 calling convention (handled transparently by LLVM's CCState):
-;   i8  args:  A, C, B, E, D  (first → A)
-;   i16 args:  BC, DE          (first → BC)
-;   i8  return: A
-;   i16 return: HL
+;   i8  args:  A, C, B         (first → A; DE is callee-saved)
+;   i16 args:  BC              (first → BC; DE is callee-saved)
+;   i8  return: A, C, B
+;   i16 return: HL, BC
+
+;===------------------------------------------------------------------------===;
+; 8-bit unsigned multiply (shift-and-add)
+;===------------------------------------------------------------------------===;
+;
+; Standard binary multiply: test each bit of %b, add %a (shifted) if set.
+; 8 iterations × ~6 SM83 instructions = ~48 bytes.  All shifts are by
+; constant 1 — no inner shift loop.
+
+define i8 @__mulqi3(i8 %a, i8 %b) {
+entry:
+  br label %loop
+
+loop:
+  %i      = phi i8 [ 0,    %entry ], [ %i_next,  %loop ]
+  %result = phi i8 [ 0,    %entry ], [ %r_next,  %loop ]
+  %a_cur  = phi i8 [ %a,   %entry ], [ %a_shift, %loop ]
+  %b_cur  = phi i8 [ %b,   %entry ], [ %b_shift, %loop ]
+
+  %bit    = and i8 %b_cur, 1
+  %do_add = icmp ne i8 %bit, 0
+  %added  = add i8 %result, %a_cur
+  %r_next = select i1 %do_add, i8 %added, i8 %result
+
+  %a_shift = shl i8 %a_cur, 1
+  %b_shift = lshr i8 %b_cur, 1
+  %i_next  = add i8 %i, 1
+  %done    = icmp eq i8 %i_next, 8
+  br i1 %done, label %exit, label %loop
+
+exit:
+  ret i8 %r_next
+}
+
+;===------------------------------------------------------------------------===;
+; 16-bit unsigned multiply (shift-and-add)
+;===------------------------------------------------------------------------===;
+;
+; Same algorithm as __mulqi3, but 16 iterations for 16-bit operands.
+; Used by __umodhi3 and __modhi3 (remainder = dividend - quotient * divisor).
+
+define i16 @__mulhi3(i16 %a, i16 %b) {
+entry:
+  br label %loop
+
+loop:
+  %i      = phi i16 [ 0,    %entry ], [ %i_next,  %loop ]
+  %result = phi i16 [ 0,    %entry ], [ %r_next,  %loop ]
+  %a_cur  = phi i16 [ %a,   %entry ], [ %a_shift, %loop ]
+  %b_cur  = phi i16 [ %b,   %entry ], [ %b_shift, %loop ]
+
+  %bit    = and i16 %b_cur, 1
+  %do_add = icmp ne i16 %bit, 0
+  %added  = add i16 %result, %a_cur
+  %r_next = select i1 %do_add, i16 %added, i16 %result
+
+  %a_shift = shl i16 %a_cur, 1
+  %b_shift = lshr i16 %b_cur, 1
+  %i_next  = add i16 %i, 1
+  %done    = icmp eq i16 %i_next, 16
+  br i1 %done, label %exit, label %loop
+
+exit:
+  ret i16 %r_next
+}
 
 ;===------------------------------------------------------------------------===;
 ; 16-bit unsigned divide
