@@ -535,11 +535,14 @@ const char *SM83TargetLowering::getTargetNodeName(unsigned Opcode) const {
 // Calling Convention Implementation
 //===----------------------------------------------------------------------===//
 
-// Assign i8 args to: A, then lo/hi bytes of BC, DE, HL.
-// Assign i16 args to: BC, DE, HL.
+// Assign i8 args to: A, then lo/hi bytes of BC, DE.
+// HL is reserved: i16 return value register + indirect-call target.
+// Assign i16 args to: BC, DE only.
+// HL is never used as an argument register so that indirect calls can always
+// safely place the function pointer in HL before CALL __sm83_icall_hl.
 static const MCPhysReg ArgGPR8s[] = {SM83::A, SM83::C, SM83::B,
-                                     SM83::E, SM83::D, SM83::L, SM83::H};
-static const MCPhysReg ArgGPR16s[] = {SM83::BC, SM83::DE, SM83::HL};
+                                     SM83::E, SM83::D};
+static const MCPhysReg ArgGPR16s[] = {SM83::BC, SM83::DE};
 
 static bool CC_SM83(unsigned ValNo, MVT ValVT, MVT LocVT,
                     CCValAssign::LocInfo LocInfo, ISD::ArgFlagsTy ArgFlags,
@@ -681,10 +684,22 @@ SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   SmallVector<SDValue, 8> Ops;
   Ops.push_back(Chain);
 
-  if (GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee))
+  if (GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee)) {
     Callee = DAG.getTargetGlobalAddress(G->getGlobal(), DL, MVT::i16);
-  else if (ExternalSymbolSDNode *E = dyn_cast<ExternalSymbolSDNode>(Callee))
+  } else if (ExternalSymbolSDNode *E = dyn_cast<ExternalSymbolSDNode>(Callee)) {
     Callee = DAG.getTargetExternalSymbol(E->getSymbol(), MVT::i16);
+  } else {
+    // Indirect call through a function pointer. SM83 has no indirect call
+    // instruction. Implement via: copy function pointer to HL, then
+    // CALL __sm83_icall_hl, which is defined in the SM83 runtime as `jp hl`.
+    //
+    // HL is reserved from the argument register list precisely for this use.
+    // The called function receives return value in HL as usual; the trampoline
+    // just transfers control and leaves the callee responsible for setting HL.
+    Chain = DAG.getCopyToReg(Chain, DL, SM83::HL, Callee, InGlue);
+    InGlue = Chain.getValue(1);
+    Callee = DAG.getTargetExternalSymbol("__sm83_icall_hl", MVT::i16);
+  }
 
   Ops.push_back(Callee);
 
