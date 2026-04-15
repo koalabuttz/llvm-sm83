@@ -99,13 +99,19 @@ def ADJCALLSTACKUP : Pseudo<(outs), (ins i16imm:$amt1, i16imm:$amt2),
                             [(SM83callseq_end timm:$amt1, timm:$amt2)]>;
 }
 
-// SELECT_CC pseudo — expanded in ISelLowering.
-let usesCustomInserter = 1 in
+// SELECT_CC pseudos — expanded in ISelLowering via custom inserter.
+let usesCustomInserter = 1 in {
 def SELECT8 : Pseudo<(outs GPR8:$dst),
                      (ins GPR8:$src1, GPR8:$src2, i8imm:$cc),
                      "# SELECT8 $dst, $src1, $src2, $cc",
                      [(set i8:$dst,
                        (SM83selectcc i8:$src1, i8:$src2, imm:$cc))]>;
+def SELECT16 : Pseudo<(outs GR16:$dst),
+                      (ins GR16:$src1, GR16:$src2, i8imm:$cc),
+                      "# SELECT16 $dst, $src1, $src2, $cc",
+                      [(set i16:$dst,
+                        (SM83selectcc i16:$src1, i16:$src2, imm:$cc))]>;
+}
 
 // Load/Store pseudos for global address access.
 // These expand to: LD HL, addr / LD r, (HL)  or  LD HL, addr / LD (HL), r

@@ -102,6 +102,8 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1, Expand);
   setOperationAction(ISD::ROTL, MVT::i8, Expand);
   setOperationAction(ISD::ROTR, MVT::i8, Expand);
+  setOperationAction(ISD::ROTL, MVT::i16, Expand);
+  setOperationAction(ISD::ROTR, MVT::i16, Expand);
   setOperationAction(ISD::CTPOP, MVT::i8, Expand);
   setOperationAction(ISD::CTLZ, MVT::i8, Expand);
   setOperationAction(ISD::CTTZ, MVT::i8, Expand);
@@ -423,8 +425,9 @@ SDValue SM83TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
 
 MachineBasicBlock *SM83TargetLowering::EmitInstrWithCustomInserter(
     MachineInstr &MI, MachineBasicBlock *MBB) const {
-  // Handle SELECT8 pseudo.
-  assert(MI.getOpcode() == SM83::SELECT8 && "Unexpected pseudo");
+  // Handle SELECT8 / SELECT16 pseudos.
+  assert((MI.getOpcode() == SM83::SELECT8 ||
+          MI.getOpcode() == SM83::SELECT16) && "Unexpected pseudo");
 
   const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
   DebugLoc DL = MI.getDebugLoc();
