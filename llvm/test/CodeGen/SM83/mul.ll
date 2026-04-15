@@ -4,8 +4,7 @@
 
 define i8 @mul_i8(i8 %a, i8 %b) {
 ; CHECK-LABEL: mul_i8:
-; CHECK:       call __mulqi3
-; CHECK:       ret
+; CHECK:       jp __mulqi3
   %r = mul i8 %a, %b
   ret i8 %r
 }

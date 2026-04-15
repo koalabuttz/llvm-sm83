@@ -10,35 +10,35 @@
 ;===------------------------------------------------------------------------===;
 
 ; CHECK-LABEL: udiv16:
-; CHECK:       call __udivhi3
+; CHECK:       {{(call|jp)}} __udivhi3
 define i16 @udiv16(i16 %a, i16 %b) {
   %r = udiv i16 %a, %b
   ret i16 %r
 }
 
 ; CHECK-LABEL: sdiv16:
-; CHECK:       call __divhi3
+; CHECK:       {{(call|jp)}} __divhi3
 define i16 @sdiv16(i16 %a, i16 %b) {
   %r = sdiv i16 %a, %b
   ret i16 %r
 }
 
 ; CHECK-LABEL: urem16:
-; CHECK:       call __umodhi3
+; CHECK:       {{(call|jp)}} __umodhi3
 define i16 @urem16(i16 %a, i16 %b) {
   %r = urem i16 %a, %b
   ret i16 %r
 }
 
 ; CHECK-LABEL: udiv8:
-; CHECK:       call __udivqi3
+; CHECK:       {{(call|jp)}} __udivqi3
 define i8 @udiv8(i8 %a, i8 %b) {
   %r = udiv i8 %a, %b
   ret i8 %r
 }
 
 ; CHECK-LABEL: sdiv8:
-; CHECK:       call __divqi3
+; CHECK:       {{(call|jp)}} __divqi3
 define i8 @sdiv8(i8 %a, i8 %b) {
   %r = sdiv i8 %a, %b
   ret i8 %r
@@ -49,14 +49,14 @@ define i8 @sdiv8(i8 %a, i8 %b) {
 ;===------------------------------------------------------------------------===;
 
 ; CHECK-LABEL: indirect_call_i8:
-; CHECK:       call __sm83_icall_hl
+; CHECK:       {{(call|jp)}} __sm83_icall_hl
 define i8 @indirect_call_i8(ptr %fn) {
   %r = call i8 %fn()
   ret i8 %r
 }
 
 ; CHECK-LABEL: indirect_call_i16:
-; CHECK:       call __sm83_icall_hl
+; CHECK:       {{(call|jp)}} __sm83_icall_hl
 define i16 @indirect_call_i16(ptr %fn, i16 %arg) {
   %r = call i16 %fn(i16 %arg)
   ret i16 %r

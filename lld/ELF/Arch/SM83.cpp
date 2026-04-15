@@ -46,6 +46,7 @@ public:
   SM83(Ctx &ctx);
   RelExpr getRelExpr(RelType type, const Symbol &s,
                      const uint8_t *loc) const override;
+  int64_t getImplicitAddend(const uint8_t *buf, RelType type) const override;
   void relocate(uint8_t *loc, const Relocation &rel,
                 uint64_t val) const override;
 };
@@ -63,6 +64,22 @@ RelExpr SM83::getRelExpr(RelType type, const Symbol &s,
     return R_PC;
   default:
     return R_ABS;
+  }
+}
+
+int64_t SM83::getImplicitAddend(const uint8_t *buf, RelType type) const {
+  switch (type) {
+  case R_386_8:
+    return *buf;
+  case R_386_PC8:
+    return static_cast<int8_t>(*buf);
+  case R_386_16:
+    return read16le(buf);
+  case R_386_32:
+    return read32le(buf);
+  default:
+    InternalErr(ctx, buf) << "cannot read addend for relocation " << type;
+    return 0;
   }
 }
 

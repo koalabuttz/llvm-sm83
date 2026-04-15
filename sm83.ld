@@ -66,7 +66,9 @@ SECTIONS {
         *(.rodata*)
         *(.rodata)
         . = ALIGN(2);
+        _rom_end = .;
     } > ROM
+    ASSERT(_rom_end <= 0x8000, "ROM bank 0 overflow: code+data exceeds 32 KB")
 
     /*
      * Initialised data: stored in ROM, copied to WRAM at startup by _start.
@@ -96,7 +98,7 @@ SECTIONS {
      * Stack: grows downward from the top of WRAM.
      * ld.lld does not place a section here; _start loads SP = $DFFF.
      */
-    _stack_top = ORIGIN(WRAM) + LENGTH(WRAM) - 1;
+    PROVIDE(_stack_top = ORIGIN(WRAM) + LENGTH(WRAM) - 1);
 
     /*
      * HRAM — small scratch area above the stack, useful for DMA wait loops.

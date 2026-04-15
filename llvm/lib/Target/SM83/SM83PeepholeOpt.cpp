@@ -14,6 +14,8 @@
 //   1. LD A, 0 → XOR A  (2 bytes → 1 byte)
 //   2. LD r, r (self-copy) → eliminated
 //   3. LD A, r; <ALU A, ...>; LD r, A → remove trailing LD when r is dead
+//   4. Consecutive LD A, r; LD A, r → single LD A, r
+//   5. LD A, r; CP s; LD A, r → LD A, r; CP s (CP doesn't clobber A)
 //
 //===----------------------------------------------------------------------===//
 
@@ -62,6 +64,19 @@ private:
   /// Remove redundant store-back: LD A, r; <op>; LD r, A when r is dead.
   bool tryRemoveRedundantStoreBack(MachineBasicBlock &MBB,
                                    MachineBasicBlock::iterator &MI);
+
+  /// Remove duplicate LD A, r when consecutive (same source).
+  bool tryRemoveDuplicateLoadA(MachineBasicBlock &MBB,
+                               MachineBasicBlock::iterator &MI);
+
+  /// Remove redundant re-load: LD A, r; CP ...; LD A, r → LD A, r; CP ...
+  /// CP does not modify A, so the second LD A, r is unnecessary.
+  bool tryRemoveReloadAfterCP(MachineBasicBlock &MBB,
+                              MachineBasicBlock::iterator &MI);
+
+  /// Tail call: CALL foo; RET → JP foo (saves 1 byte + stack push/pop).
+  bool tryTailCall(MachineBasicBlock &MBB,
+                   MachineBasicBlock::iterator &MI);
 };
 
 } // namespace
@@ -89,6 +104,20 @@ bool SM83PeepholeOpt::optimizeMBB(MachineBasicBlock &MBB) {
     }
     if (MI != E) {
       Modified |= tryRemoveRedundantStoreBack(MBB, MI);
+    }
+    if (MI != E) {
+      Modified |= tryRemoveDuplicateLoadA(MBB, MI);
+    }
+    if (MI != E) {
+      Modified |= tryRemoveReloadAfterCP(MBB, MI);
+    }
+    if (MI != E) {
+      if (tryTailCall(MBB, MI)) {
+        Modified = true;
+        // tryTailCall erases MI and the following RET, so MI now points
+        // to the next valid instruction. Skip the stale Next assignment.
+        continue;
+      }
     }
     MI = Next;
   }
@@ -202,6 +231,112 @@ bool SM83PeepholeOpt::tryRemoveRedundantStoreBack(
     }
   }
 
+  MI = MBB.erase(MI);
+  return true;
+}
+
+bool SM83PeepholeOpt::tryRemoveDuplicateLoadA(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator &MI) {
+  // Pattern: LD A, r followed immediately by LD A, r (same src) → remove second.
+  // Arises when pseudo expansion loads A multiple times for chained ALU ops.
+  if (MI->getOpcode() != SM83::LDrr)
+    return false;
+
+  Register DstReg = MI->getOperand(0).getReg();
+  Register SrcReg = MI->getOperand(1).getReg();
+  if (DstReg != SM83::A)
+    return false;
+
+  auto Next = std::next(MachineBasicBlock::iterator(MI));
+  if (Next == MBB.end())
+    return false;
+
+  if (Next->getOpcode() != SM83::LDrr)
+    return false;
+
+  Register NextDst = Next->getOperand(0).getReg();
+  Register NextSrc = Next->getOperand(1).getReg();
+  if (NextDst != SM83::A || NextSrc != SrcReg)
+    return false;
+
+  // Remove the duplicate (second) load.
+  MBB.erase(Next);
+  return true;
+}
+
+bool SM83PeepholeOpt::tryRemoveReloadAfterCP(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator &MI) {
+  // Pattern: LD A, r; CP ...; LD A, r → remove the trailing LD A, r.
+  // CP does not modify A (only sets flags), so A still holds r's value.
+  if (MI->getOpcode() != SM83::LDrr)
+    return false;
+
+  Register DstReg = MI->getOperand(0).getReg();
+  Register SrcReg = MI->getOperand(1).getReg();
+  if (DstReg != SM83::A)
+    return false;
+
+  // Look ahead: skip CP instructions (they don't clobber A).
+  auto Check = std::next(MachineBasicBlock::iterator(MI));
+  while (Check != MBB.end() &&
+         (Check->getOpcode() == SM83::CPr ||
+          Check->getOpcode() == SM83::CPi)) {
+    ++Check;
+  }
+
+  if (Check == MBB.end())
+    return false;
+
+  // If the next non-CP instruction is LD A, r with the same src, remove it.
+  if (Check->getOpcode() != SM83::LDrr)
+    return false;
+
+  Register ReloadDst = Check->getOperand(0).getReg();
+  Register ReloadSrc = Check->getOperand(1).getReg();
+  if (ReloadDst != SM83::A || ReloadSrc != SrcReg)
+    return false;
+
+  // Also verify that SrcReg was not modified by any of the CP instructions
+  // (it shouldn't be — CP only reads operands — but be defensive).
+  auto Verify = std::next(MachineBasicBlock::iterator(MI));
+  for (; Verify != Check; ++Verify) {
+    if (Verify->definesRegister(SrcReg, TRI))
+      return false;
+  }
+
+  MBB.erase(Check);
+  return true;
+}
+
+bool SM83PeepholeOpt::tryTailCall(MachineBasicBlock &MBB,
+                                  MachineBasicBlock::iterator &MI) {
+  // Pattern: CALL foo at the end of a block, followed by a block ending in RET.
+  // Replace CALL with JP (saves 1 byte + avoids push/pop of return address).
+  // Constraint: only safe when CALL is the last non-terminator before RET,
+  //             and no epilogue code (ADD SP, N) follows.
+  if (MI->getOpcode() != SM83::CALL)
+    return false;
+
+  // The CALL must be the last instruction before the terminator region.
+  auto Next = std::next(MachineBasicBlock::iterator(MI));
+  if (Next == MBB.end())
+    return false;
+
+  // The next instruction must be RET.
+  if (Next->getOpcode() != SM83::RET)
+    return false;
+
+  // RET must be the last instruction in the block.
+  if (std::next(Next) != MBB.end())
+    return false;
+
+  // Replace CALL with JP.
+  DebugLoc DL = MI->getDebugLoc();
+  MachineOperand &Target = MI->getOperand(0);
+  BuildMI(MBB, MI, DL, TII->get(SM83::JP)).add(Target);
+
+  // Remove the CALL and RET.
+  MBB.erase(Next);
   MI = MBB.erase(MI);
   return true;
 }

@@ -295,3 +295,125 @@ define i8 @__modqi3(i8 %dividend, i8 %divisor) {
   %result    = select i1 %d_isneg, i8 %rneg2, i8 %r
   ret i8 %result
 }
+
+;===------------------------------------------------------------------------===;
+; 32-bit unsigned multiply (shift-and-add)
+;===------------------------------------------------------------------------===;
+
+define i32 @__mulsi3(i32 %a, i32 %b) {
+entry:
+  br label %loop
+
+loop:
+  %i      = phi i32 [ 0,    %entry ], [ %i_next,  %loop ]
+  %result = phi i32 [ 0,    %entry ], [ %r_next,  %loop ]
+  %a_cur  = phi i32 [ %a,   %entry ], [ %a_shift, %loop ]
+  %b_cur  = phi i32 [ %b,   %entry ], [ %b_shift, %loop ]
+
+  %bit    = and i32 %b_cur, 1
+  %do_add = icmp ne i32 %bit, 0
+  %added  = add i32 %result, %a_cur
+  %r_next = select i1 %do_add, i32 %added, i32 %result
+
+  %a_shift = shl i32 %a_cur, 1
+  %b_shift = lshr i32 %b_cur, 1
+  %i_next  = add i32 %i, 1
+  %done    = icmp eq i32 %i_next, 32
+  br i1 %done, label %exit, label %loop
+
+exit:
+  ret i32 %r_next
+}
+
+;===------------------------------------------------------------------------===;
+; 32-bit unsigned divide
+;===------------------------------------------------------------------------===;
+
+define i32 @__udivsi3(i32 %dividend, i32 %divisor) {
+entry:
+  br label %loop
+
+loop:
+  %i         = phi i32 [ 0,         %entry ], [ %i_next,    %loop ]
+  %q         = phi i32 [ 0,         %entry ], [ %q_next,    %loop ]
+  %r         = phi i32 [ 0,         %entry ], [ %r_next,    %loop ]
+  %work      = phi i32 [ %dividend, %entry ], [ %work_next, %loop ]
+
+  %msb       = icmp slt i32 %work, 0
+  %msb1      = zext i1 %msb to i32
+
+  %r1        = shl  i32 %r, 1
+  %r2        = or   i32 %r1, %msb1
+
+  %cmp       = icmp uge i32 %r2, %divisor
+  %r_sub     = sub  i32 %r2, %divisor
+  %r_next    = select i1 %cmp, i32 %r_sub, i32 %r2
+
+  %q1        = shl  i32 %q, 1
+  %qbit      = zext i1 %cmp to i32
+  %q_next    = or   i32 %q1, %qbit
+
+  %work_next = shl  i32 %work, 1
+
+  %i_next    = add  i32 %i, 1
+  %done      = icmp eq i32 %i_next, 32
+  br i1 %done, label %exit, label %loop
+
+exit:
+  ret i32 %q_next
+}
+
+;===------------------------------------------------------------------------===;
+; 32-bit unsigned modulo
+;===------------------------------------------------------------------------===;
+
+define i32 @__umodsi3(i32 %dividend, i32 %divisor) {
+  %q  = call i32 @__udivsi3(i32 %dividend, i32 %divisor)
+  %qd = mul  i32 %q, %divisor
+  %r  = sub  i32 %dividend, %qd
+  ret i32 %r
+}
+
+;===------------------------------------------------------------------------===;
+; 32-bit signed divide  (truncates toward zero — C semantics)
+;===------------------------------------------------------------------------===;
+
+define i32 @__divsi3(i32 %dividend, i32 %divisor) {
+  %xored     = xor  i32 %dividend, %divisor
+  %neg_res   = icmp slt i32 %xored, 0
+
+  %dneg      = sub  i32 0, %dividend
+  %d_isneg   = icmp slt i32 %dividend, 0
+  %adividend = select i1 %d_isneg, i32 %dneg, i32 %dividend
+
+  %rneg      = sub  i32 0, %divisor
+  %r_isneg   = icmp slt i32 %divisor, 0
+  %adivisor  = select i1 %r_isneg, i32 %rneg, i32 %divisor
+
+  %q         = call i32 @__udivsi3(i32 %adividend, i32 %adivisor)
+
+  %qneg      = sub  i32 0, %q
+  %result    = select i1 %neg_res, i32 %qneg, i32 %q
+  ret i32 %result
+}
+
+;===------------------------------------------------------------------------===;
+; 32-bit signed modulo  (remainder has same sign as dividend — C semantics)
+;===------------------------------------------------------------------------===;
+
+define i32 @__modsi3(i32 %dividend, i32 %divisor) {
+  %d_isneg   = icmp slt i32 %dividend, 0
+
+  %dneg      = sub  i32 0, %dividend
+  %adividend = select i1 %d_isneg, i32 %dneg, i32 %dividend
+
+  %r_isneg   = icmp slt i32 %divisor, 0
+  %rneg      = sub  i32 0, %divisor
+  %adivisor  = select i1 %r_isneg, i32 %rneg, i32 %divisor
+
+  %r         = call i32 @__umodsi3(i32 %adividend, i32 %adivisor)
+
+  %rneg2     = sub  i32 0, %r
+  %result    = select i1 %d_isneg, i32 %rneg2, i32 %r
+  ret i32 %result
+}

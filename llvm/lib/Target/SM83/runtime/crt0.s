@@ -78,7 +78,7 @@ _start:
     ; 4. Enable VBlank interrupt and global interrupts, then call main().
     ; -----------------------------------------------------------------------
     ld      a, 0x01                 ; IE_VBLANK
-    ldh     [$FF], a                ; $FFFF = IE register
+    ldh     [0xFF], a               ; $FFFF = IE register
 
     call    main
 

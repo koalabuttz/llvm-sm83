@@ -5,8 +5,7 @@ declare i8 @callee(i8)
 
 define i8 @caller(i8 %x) {
 ; CHECK-LABEL: caller:
-; CHECK:       call callee
-; CHECK:       ret
+; CHECK:       jp callee
   %r = call i8 @callee(i8 %x)
   ret i8 %r
 }
