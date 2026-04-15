@@ -45,6 +45,8 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
     setLoadExtAction(ISD::ZEXTLOAD, VT, MVT::i1, Promote);
   }
   setLoadExtAction(ISD::SEXTLOAD, MVT::i16, MVT::i8, Expand);
+  setLoadExtAction(ISD::ZEXTLOAD, MVT::i16, MVT::i8, Expand);
+  setLoadExtAction(ISD::EXTLOAD, MVT::i16, MVT::i8, Expand);
   setTruncStoreAction(MVT::i16, MVT::i8, Expand);
 
   // Custom lowering.
@@ -98,6 +100,10 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   setOperationAction(ISD::MULHU, MVT::i8, Expand);
   setOperationAction(ISD::SMUL_LOHI, MVT::i8, Expand);
   setOperationAction(ISD::UMUL_LOHI, MVT::i8, Expand);
+  setOperationAction(ISD::MULHS, MVT::i16, Expand);
+  setOperationAction(ISD::MULHU, MVT::i16, Expand);
+  setOperationAction(ISD::SMUL_LOHI, MVT::i16, Expand);
+  setOperationAction(ISD::UMUL_LOHI, MVT::i16, Expand);
 
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1, Expand);
   setOperationAction(ISD::ROTL, MVT::i8, Expand);
