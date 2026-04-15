@@ -16,10 +16,12 @@
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCFixup.h"
+#include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/MCTargetOptions.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -110,6 +112,48 @@ public:
     while (Count--)
       OS.write('\x00');
     return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // Instruction relaxation: JR (±127 B, 2 bytes) → JP (16-bit, 3 bytes)
+  // -------------------------------------------------------------------------
+
+  // Return true if the opcode might need relaxation (preliminary check before
+  // computing actual fixup values).
+  bool mayNeedRelaxation(unsigned Opcode, ArrayRef<MCOperand> Operands,
+                         const MCSubtargetInfo &STI) const override {
+    return Opcode == SM83::JR || Opcode == SM83::JRcc;
+  }
+
+  // Returns true if the fixup's PC-relative value is out of the signed 8-bit
+  // range that JR requires (after the -1 adjustment for instruction length).
+  bool fixupNeedsRelaxationAdvanced(const MCFragment &, const MCFixup &Fixup,
+                                    const MCValue &, uint64_t UnsignedValue,
+                                    bool Resolved) const override {
+    if ((unsigned)Fixup.getKind() != SM83::fixup_pcrel_8)
+      return false;
+    // If the symbol is not yet resolved, conservatively relax.
+    if (!Resolved)
+      return true;
+    // Compute the adjusted offset (same as applyFixup: offset = value - 1).
+    int64_t Value = static_cast<int64_t>(UnsignedValue) - 1;
+    return !isInt<8>(Value);
+  }
+
+  // Replace a JR/JRcc MCInst with the equivalent JP/JPcc.
+  // The operands are identical; only the opcode changes.
+  void relaxInstruction(MCInst &Inst,
+                        const MCSubtargetInfo &STI) const override {
+    switch (Inst.getOpcode()) {
+    default:
+      llvm_unreachable("relaxInstruction called on non-JR SM83 instruction");
+    case SM83::JR:
+      Inst.setOpcode(SM83::JP);
+      return;
+    case SM83::JRcc:
+      Inst.setOpcode(SM83::JPcc);
+      return;
+    }
   }
 
   // -------------------------------------------------------------------------
