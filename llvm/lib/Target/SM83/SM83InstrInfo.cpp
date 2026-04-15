@@ -11,6 +11,8 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 
 #include "SM83.h"
 #include "SM83Subtarget.h"
@@ -37,12 +39,11 @@ void SM83InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     return;
   }
 
-  // 16-bit register pair copy: handles GR16, GR16NoHL, GPR16, Ptr classes.
-  // Check all 16-bit register classes that have sub_lo/sub_hi.
-  if ((SM83::GR16RegClass.contains(DestReg) || SM83::GPR16RegClass.contains(DestReg) ||
-       SM83::GR16NoHLRegClass.contains(DestReg) || SM83::PtrRegClass.contains(DestReg)) &&
-      (SM83::GR16RegClass.contains(SrcReg) || SM83::GPR16RegClass.contains(SrcReg) ||
-       SM83::GR16NoHLRegClass.contains(SrcReg) || SM83::PtrRegClass.contains(SrcReg))) {
+  // 16-bit register pair copy: handles GR16 (BC, DE, HL) and subsets.
+  // Exclude AF and SP — AF contains the non-copyable F register,
+  // SP requires LDSPHL/LDHLSP and is handled below.
+  if (SM83::GR16RegClass.contains(DestReg) &&
+      SM83::GR16RegClass.contains(SrcReg)) {
     Register DestLo = RI.getSubReg(DestReg, SM83::sub_lo);
     Register DestHi = RI.getSubReg(DestReg, SM83::sub_hi);
     Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
@@ -65,12 +66,38 @@ void SM83InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     }
   }
 
-  // SP ↔ HL: LD SP, HL (only direction supported by hardware).
+  // SP → HL: LD HL, SP+0 (read stack pointer into HL).
+  if (DestReg == SM83::HL && SrcReg == SM83::SP) {
+    BuildMI(MBB, MI, DL, get(SM83::LDHLSP)).addImm(0);
+    return;
+  }
+
+  // HL → SP: LD SP, HL.
   if (DestReg == SM83::SP && SrcReg == SM83::HL) {
     BuildMI(MBB, MI, DL, get(SM83::LDSPHL));
     return;
   }
 
+  // i8 → i16 pair copy (e.g., A → BC): zero-extend by copying to lo, clearing hi.
+  if (SM83::GR16RegClass.contains(DestReg) &&
+      SM83::GPR8RegClass.contains(SrcReg)) {
+    Register DestLo = RI.getSubReg(DestReg, SM83::sub_lo);
+    Register DestHi = RI.getSubReg(DestReg, SM83::sub_hi);
+    BuildMI(MBB, MI, DL, get(SM83::LDrr), DestLo)
+        .addReg(SrcReg, getKillRegState(KillSrc));
+    BuildMI(MBB, MI, DL, get(SM83::LDri), DestHi).addImm(0);
+    return;
+  }
+
+  // Provide detailed error for debugging.
+  errs() << "SM83 copyPhysReg failure: dest=" << printReg(DestReg, &RI)
+         << " src=" << printReg(SrcReg, &RI) << "\n";
+  errs() << "  dest in GPR8=" << SM83::GPR8RegClass.contains(DestReg)
+         << " GR16=" << SM83::GR16RegClass.contains(DestReg)
+         << " GPR16=" << SM83::GPR16RegClass.contains(DestReg) << "\n";
+  errs() << "  src in GPR8=" << SM83::GPR8RegClass.contains(SrcReg)
+         << " GR16=" << SM83::GR16RegClass.contains(SrcReg)
+         << " GPR16=" << SM83::GPR16RegClass.contains(SrcReg) << "\n";
   report_fatal_error("SM83: cannot copy between these register classes");
 }
 
