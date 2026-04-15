@@ -59,9 +59,47 @@ void SM83DAGToDAGISel::Select(SDNode *N) {
   unsigned Opcode = N->getOpcode();
 
   switch (Opcode) {
+  case ISD::FrameIndex: {
+    // Bare FrameIndex used as a pointer value (e.g., taking address of a local).
+    // Materialize using LOAD_FI16-like approach: LDHLSP + copy HL to dest pair.
+    // We reuse LOAD_FI8 with a dummy load, but actually we just need the address.
+    // Simplest: emit LDHLSP to get address in HL, then copy HL to the result.
+    if (N->getValueType(0) == MVT::i16) {
+      SDLoc DL(N);
+      int FI = cast<FrameIndexSDNode>(N)->getIndex();
+      SDValue FINode = CurDAG->getTargetFrameIndex(FI, MVT::i16);
+      // Use LDrri with the frame index — frame lowering will replace it with
+      // the actual SP+offset address. This is a 3-byte LD rr, imm16 where
+      // the immediate is the resolved stack address.
+      SDNode *Res = CurDAG->getMachineNode(SM83::LDrri, DL, MVT::i16, FINode);
+      ReplaceNode(N, Res);
+      return;
+    }
+    break;
+  }
   case ISD::LOAD: {
     auto *LD = cast<LoadSDNode>(N);
     SDValue Addr = LD->getBasePtr();
+
+    // LDH optimization: constant address in $FF00-$FFFF → LDH_LOAD8 (2 bytes
+    // vs 3 for LD HL,nn + LD r,(HL)).
+    if (LD->getMemoryVT() == MVT::i8 && !LD->isIndexed()) {
+      if (auto *C = dyn_cast<ConstantSDNode>(Addr)) {
+        uint64_t Addr16 = C->getZExtValue();
+        if (Addr16 >= 0xFF00 && Addr16 <= 0xFFFF) {
+          SDLoc DL(N);
+          SDValue Offset = CurDAG->getTargetConstant(Addr16 & 0xFF, DL, MVT::i8);
+          SDNode *Res = CurDAG->getMachineNode(SM83::LDH_LOAD8, DL, MVT::i8,
+                                               MVT::Other, Offset,
+                                               LD->getChain());
+          CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
+          CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 1), SDValue(Res, 1));
+          CurDAG->RemoveDeadNode(N);
+          return;
+        }
+      }
+    }
+
     if (Addr.getOpcode() == ISD::FrameIndex && !LD->isIndexed()) {
       SDLoc DL(N);
       int FI = cast<FrameIndexSDNode>(Addr)->getIndex();
@@ -91,6 +129,25 @@ void SM83DAGToDAGISel::Select(SDNode *N) {
   case ISD::STORE: {
     auto *ST = cast<StoreSDNode>(N);
     SDValue Addr = ST->getBasePtr();
+
+    // LDH optimization: constant address in $FF00-$FFFF → LDH_STORE8.
+    if (ST->getMemoryVT() == MVT::i8 && !ST->isTruncatingStore() &&
+        !ST->isIndexed()) {
+      if (auto *C = dyn_cast<ConstantSDNode>(Addr)) {
+        uint64_t Addr16 = C->getZExtValue();
+        if (Addr16 >= 0xFF00 && Addr16 <= 0xFFFF) {
+          SDLoc DL(N);
+          SDValue Offset = CurDAG->getTargetConstant(Addr16 & 0xFF, DL, MVT::i8);
+          SDNode *Res = CurDAG->getMachineNode(SM83::LDH_STORE8, DL, MVT::Other,
+                                               ST->getValue(), Offset,
+                                               ST->getChain());
+          CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
+          CurDAG->RemoveDeadNode(N);
+          return;
+        }
+      }
+    }
+
     if (Addr.getOpcode() == ISD::FrameIndex && !ST->isTruncatingStore() &&
         !ST->isIndexed()) {
       SDLoc DL(N);

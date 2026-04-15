@@ -62,6 +62,11 @@ def SM83cmp16 : SDNode<"SM83ISD::CMP16", SDT_SM83Cmp16, [SDNPOutGlue]>;
 // CMP16EQ — full 16-bit equality compare: XOR lo + XOR hi + OR → Z flag.
 def SM83cmp16eq : SDNode<"SM83ISD::CMP16EQ", SDT_SM83Cmp16, [SDNPOutGlue]>;
 
+// CMPC16 — 16-bit compare with carry, for chaining into i32/i64 comparisons.
+// Takes glue in (carry from lo-half compare), produces glue out.
+def SM83cmpc16 : SDNode<"SM83ISD::CMPC16", SDT_SM83Cmp16,
+                        [SDNPInGlue, SDNPOutGlue]>;
+
 def SM83selectcc : SDNode<"SM83ISD::SELECT_CC", SDT_SM83SelectCC,
                           [SDNPInGlue]>;
 
@@ -182,6 +187,14 @@ def CMP16rr : Pseudo<(outs), (ins GR16:$lhs, GR16:$rhs),
                      "# CMP16 $lhs, $rhs",
                      [(SM83cmp16 i16:$lhs, i16:$rhs)]>;
 
+// CMPC16rr — 16-bit compare with carry (for i32/i64 ordered comparisons).
+// Uses carry flag from previous CMP16/CMPC16 in the chain.
+// Expands to: LD A,lhs.lo; SBC A,rhs.lo; LD A,lhs.hi; SBC A,rhs.hi.
+let Defs = [A, F], Uses = [F], hasSideEffects = 0 in
+def CMPC16rr : Pseudo<(outs), (ins GR16:$lhs, GR16:$rhs),
+                      "# CMPC16 $lhs, $rhs",
+                      [(SM83cmpc16 i16:$lhs, i16:$rhs)]>;
+
 // CMP16EQrr — 16-bit equality compare. L is used as a scratch register.
 // Expands to: LD A,lhs.lo; XOR rhs.lo; LD L,A; LD A,lhs.hi; XOR rhs.hi; OR L → Z=(lhs==rhs).
 let Defs = [A, F, L], hasSideEffects = 0 in
@@ -258,6 +271,18 @@ let Defs = [F] in
 def SHL16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src, GPR8:$amt),
                      "# SHL16 $dst, $src, $amt",
                      [(set i16:$dst, (shl i16:$src, (i8 GPR8:$amt)))]>;
+
+// i16 shift right logical — SRL hi, RR lo (shift by 1).
+let Defs = [F] in
+def SRL16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src, GPR8:$amt),
+                     "# SRL16 $dst, $src, $amt",
+                     [(set i16:$dst, (srl i16:$src, (i8 GPR8:$amt)))]>;
+
+// i16 shift right arithmetic — SRA hi, RR lo (shift by 1).
+let Defs = [F] in
+def SRA16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src, GPR8:$amt),
+                     "# SRA16 $dst, $src, $amt",
+                     [(set i16:$dst, (sra i16:$src, (i8 GPR8:$amt)))]>;
 
 // i16 load/store from global address.
 let mayLoad = 1, hasSideEffects = 0 in
@@ -405,6 +430,17 @@ def LDH_CA : SM83Inst8<(outs), (ins), "ldh\t[c], a", []> {
   let Uses = [A, C];
 }
 }
+
+// LDH pseudos — high-page load/store for constant addresses in $FF00–$FFFF.
+// Selected in ISelDAGToDAG when address is a compile-time constant in that range.
+// Expanded to: LDH A,[n] + LD dst,A  /  LD A,src + LDH [n],A
+let mayLoad = 1, hasSideEffects = 0, mayStore = 0, Defs = [A] in
+def LDH_LOAD8 : Pseudo<(outs GPR8:$dst), (ins i8imm:$addr),
+                        "# LDH_LOAD8 $dst, [$addr]", []>;
+
+let mayStore = 1, hasSideEffects = 0, mayLoad = 0, Defs = [A] in
+def LDH_STORE8 : Pseudo<(outs), (ins GPR8:$src, i8imm:$addr),
+                         "# LDH_STORE8 [$addr], $src", []>;
 
 //===----------------------------------------------------------------------===//
 // 16-bit Load immediate: LD rr, imm16
@@ -740,3 +776,19 @@ def RETcc : SM83Inst8<(outs), (ins SM83condcode:$cc), "ret\t$cc", []>;
 // RST — restart vectors
 let isCall = 1, Defs = [SP], Uses = [SP], hasSideEffects = 0 in
 def RST : SM83Inst8<(outs), (ins i8imm:$vec), "rst\t$vec", []>;
+
+//===----------------------------------------------------------------------===//
+// Address materialization patterns
+//===----------------------------------------------------------------------===//
+
+// When a global address or external symbol is used as a plain i16 value
+// (not directly consumed by a load/store pattern), materialize it into
+// a register pair via LDrri (LD rr, imm16).
+def : Pat<(SM83Wrapper tglobaladdr:$addr), (LDrri tglobaladdr:$addr)>;
+def : Pat<(SM83Wrapper texternalsym:$sym), (LDrri texternalsym:$sym)>;
+
+// Load/store to external symbol addresses (for runtime globals).
+def : Pat<(load (SM83Wrapper texternalsym:$addr)),
+          (LOAD8 texternalsym:$addr)>;
+def : Pat<(store i8:$val, (SM83Wrapper texternalsym:$addr)),
+          (STORE8 GPR8:$val, texternalsym:$addr)>;

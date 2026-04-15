@@ -11,7 +11,7 @@ define i8 @ret_42() {
 
 define i8 @ret_0() {
 ; CHECK-LABEL: ret_0:
-; CHECK:       ld a, 0
+; CHECK:       xor a
 ; CHECK-NEXT:  ret
   ret i8 0
 }

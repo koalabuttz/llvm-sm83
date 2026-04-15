@@ -42,6 +42,8 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   // Custom lowering.
   setOperationAction(ISD::GlobalAddress, MVT::i16, Custom);
   setOperationAction(ISD::ExternalSymbol, MVT::i16, Custom);
+  // FrameIndex must be Custom so taking the address of a local variable works.
+  // Lowered to LDHLSP (LD HL, SP+offset) in ISelDAGToDAG.
   setOperationAction(ISD::BR_CC, MVT::i8, Custom);
   setOperationAction(ISD::BR_CC, MVT::i16, Custom);
   setOperationAction(ISD::SELECT_CC, MVT::i8, Custom);
@@ -50,6 +52,21 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   setOperationAction(ISD::SETCC, MVT::i16, Custom);
   setOperationAction(ISD::SELECT, MVT::i8, Expand);
   setOperationAction(ISD::SELECT, MVT::i16, Expand);
+
+  // Raw BRCOND must be expanded to BR_CC (which we handle via Custom lowering).
+  setOperationAction(ISD::BRCOND, MVT::Other, Expand);
+
+  // i32 comparison/branching — Custom so we can decompose into chained i16 compares.
+  setOperationAction(ISD::BR_CC, MVT::i32, Custom);
+  setOperationAction(ISD::SETCC, MVT::i32, Custom);
+  setOperationAction(ISD::SELECT_CC, MVT::i32, Expand);
+  setOperationAction(ISD::SELECT, MVT::i32, Expand);
+
+  // i64 comparison/branching.
+  setOperationAction(ISD::BR_CC, MVT::i64, Custom);
+  setOperationAction(ISD::SETCC, MVT::i64, Custom);
+  setOperationAction(ISD::SELECT_CC, MVT::i64, Expand);
+  setOperationAction(ISD::SELECT, MVT::i64, Expand);
 
   // Expand operations SM83 can't do natively.
   setOperationAction(ISD::STACKSAVE, MVT::Other, Expand);
@@ -85,6 +102,32 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   setOperationAction(ISD::SHL_PARTS, MVT::i8, Expand);
   setOperationAction(ISD::SRA_PARTS, MVT::i8, Expand);
   setOperationAction(ISD::SRL_PARTS, MVT::i8, Expand);
+  setOperationAction(ISD::SHL_PARTS, MVT::i16, Expand);
+  setOperationAction(ISD::SRA_PARTS, MVT::i16, Expand);
+  setOperationAction(ISD::SRL_PARTS, MVT::i16, Expand);
+
+  // i32 arithmetic — LLVM decomposes to i16 pairs.
+  for (auto VT : {MVT::i32, MVT::i64}) {
+    setOperationAction(ISD::MUL, VT, Expand);
+    setOperationAction(ISD::SDIV, VT, Expand);
+    setOperationAction(ISD::UDIV, VT, Expand);
+    setOperationAction(ISD::SREM, VT, Expand);
+    setOperationAction(ISD::UREM, VT, Expand);
+    setOperationAction(ISD::MULHS, VT, Expand);
+    setOperationAction(ISD::MULHU, VT, Expand);
+    setOperationAction(ISD::SMUL_LOHI, VT, Expand);
+    setOperationAction(ISD::UMUL_LOHI, VT, Expand);
+    setOperationAction(ISD::SHL, VT, Expand);
+    setOperationAction(ISD::SRL, VT, Expand);
+    setOperationAction(ISD::SRA, VT, Expand);
+    setOperationAction(ISD::ROTL, VT, Expand);
+    setOperationAction(ISD::ROTR, VT, Expand);
+    setOperationAction(ISD::CTPOP, VT, Expand);
+    setOperationAction(ISD::CTLZ, VT, Expand);
+    setOperationAction(ISD::CTTZ, VT, Expand);
+    setOperationAction(ISD::BSWAP, VT, Expand);
+    setOperationAction(ISD::SIGN_EXTEND_INREG, VT, Expand);
+  }
 
   setMinFunctionAlignment(Align(1));
 }
@@ -200,10 +243,72 @@ static void applySignFlip(SDValue &LHS, SDValue &RHS, SelectionDAG &DAG,
   RHS = DAG.getNode(ISD::XOR, DL, MVT::i8, RHS, Flip);
 }
 
+// Decompose an i32 or i64 value into i16 halves via EXTRACT_ELEMENT.
+// For i32: returns 2 i16 values. For i64: returns 4 i16 values.
+static SmallVector<SDValue, 4> decomposeToI16(SDValue V, SelectionDAG &DAG,
+                                               const SDLoc &DL) {
+  SmallVector<SDValue, 4> Parts;
+  EVT VT = V.getValueType();
+  if (VT == MVT::i32) {
+    SDValue Lo = DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i16, V,
+                             DAG.getIntPtrConstant(0, DL));
+    SDValue Hi = DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i16, V,
+                             DAG.getIntPtrConstant(1, DL));
+    Parts.push_back(Lo);
+    Parts.push_back(Hi);
+  } else if (VT == MVT::i64) {
+    SDValue Lo32 = DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i32, V,
+                               DAG.getIntPtrConstant(0, DL));
+    SDValue Hi32 = DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i32, V,
+                               DAG.getIntPtrConstant(1, DL));
+    for (SDValue Half : {Lo32, Hi32}) {
+      Parts.push_back(DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i16, Half,
+                                  DAG.getIntPtrConstant(0, DL)));
+      Parts.push_back(DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i16, Half,
+                                  DAG.getIntPtrConstant(1, DL)));
+    }
+  }
+  return Parts;
+}
+
 SDValue SM83TargetLowering::emitCmp(SDValue LHS, SDValue RHS,
                                     ISD::CondCode CC, bool NeedSignFlip,
                                     SelectionDAG &DAG,
                                     const SDLoc &DL) const {
+  EVT VT = LHS.getValueType();
+
+  // i32 and i64 comparisons: decompose to i16 pairs.
+  if (VT == MVT::i32 || VT == MVT::i64) {
+    SmallVector<SDValue, 4> LParts = decomposeToI16(LHS, DAG, DL);
+    SmallVector<SDValue, 4> RParts = decomposeToI16(RHS, DAG, DL);
+    unsigned N = LParts.size();
+
+    if (CC == ISD::SETEQ || CC == ISD::SETNE) {
+      // Equality: XOR each i16 pair, OR all results, compare with zero.
+      SDValue Acc = DAG.getNode(ISD::XOR, DL, MVT::i16, LParts[0], RParts[0]);
+      for (unsigned i = 1; i < N; ++i) {
+        SDValue X = DAG.getNode(ISD::XOR, DL, MVT::i16, LParts[i], RParts[i]);
+        Acc = DAG.getNode(ISD::OR, DL, MVT::i16, Acc, X);
+      }
+      SDValue Zero = DAG.getConstant(0, DL, MVT::i16);
+      return DAG.getNode(SM83ISD::CMP16EQ, DL, MVT::Glue, Acc, Zero);
+    }
+
+    // Ordered comparison: chain CMP16 on lo pair, then CMPC16 on remaining pairs.
+    if (NeedSignFlip) {
+      // Flip sign bit of the topmost i16 half only.
+      SDValue Flip = DAG.getConstant(0x8000, DL, MVT::i16);
+      LParts[N - 1] = DAG.getNode(ISD::XOR, DL, MVT::i16, LParts[N - 1], Flip);
+      RParts[N - 1] = DAG.getNode(ISD::XOR, DL, MVT::i16, RParts[N - 1], Flip);
+    }
+    SDValue Cmp = DAG.getNode(SM83ISD::CMP16, DL, MVT::Glue,
+                              LParts[0], RParts[0]);
+    for (unsigned i = 1; i < N; ++i)
+      Cmp = DAG.getNode(SM83ISD::CMPC16, DL, MVT::Glue,
+                         LParts[i], RParts[i], Cmp);
+    return Cmp;
+  }
+
   if (LHS.getValueType() == MVT::i16) {
     if (CC == ISD::SETEQ || CC == ISD::SETNE)
       return DAG.getNode(SM83ISD::CMP16EQ, DL, MVT::Glue, LHS, RHS);
@@ -322,6 +427,7 @@ const char *SM83TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case SM83ISD::CMP16:     return "SM83ISD::CMP16";
   case SM83ISD::CMP16EQ:   return "SM83ISD::CMP16EQ";
   case SM83ISD::SELECT_CC: return "SM83ISD::SELECT_CC";
+  case SM83ISD::CMPC16:    return "SM83ISD::CMPC16";
   default:                 return nullptr;
   }
 }

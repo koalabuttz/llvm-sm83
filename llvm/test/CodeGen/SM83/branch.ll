@@ -8,7 +8,7 @@ define i8 @branch_eq(i8 %a, i8 %b) {
 ; CHECK:       jr nz,
 ; CHECK:       ld a, 1
 ; CHECK:       ret
-; CHECK:       ld a, 0
+; CHECK:       xor a
 ; CHECK:       ret
 entry:
   %cmp = icmp eq i8 %a, %b

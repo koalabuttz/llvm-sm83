@@ -23,10 +23,12 @@ FunctionPass *createSM83ISelDag(SM83TargetMachine &TM,
                                 CodeGenOptLevel OptLevel);
 
 FunctionPass *createSM83ExpandPseudoPass();
+FunctionPass *createSM83PeepholeOptPass();
 
 void initializeSM83AsmPrinterPass(PassRegistry &);
 void initializeSM83DAGToDAGISelLegacyPass(PassRegistry &);
 void initializeSM83ExpandPseudoPass(PassRegistry &);
+void initializeSM83PeepholeOptPass(PassRegistry &);
 
 } // end namespace llvm
 

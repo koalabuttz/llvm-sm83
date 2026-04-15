@@ -72,7 +72,12 @@ private:
   bool expandLOAD_FI16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandSTORE_FI16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandCMP16rr(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandCMPC16rr(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandCMP16EQrr(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandSRL16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandSRA16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandLDH_LOAD8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandLDH_STORE8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
 };
 
 } // namespace
@@ -133,7 +138,12 @@ bool SM83ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case SM83::SEXT8_16: return expandSEXT8_16(MBB, MI);
   case SM83::CMPC8rr: return expandCMPC8(MBB, MI);
   case SM83::CMP16rr: return expandCMP16rr(MBB, MI);
+  case SM83::CMPC16rr: return expandCMPC16rr(MBB, MI);
   case SM83::CMP16EQrr: return expandCMP16EQrr(MBB, MI);
+  case SM83::SRL16rr: return expandSRL16(MBB, MI);
+  case SM83::SRA16rr: return expandSRA16(MBB, MI);
+  case SM83::LDH_LOAD8: return expandLDH_LOAD8(MBB, MI);
+  case SM83::LDH_STORE8: return expandLDH_STORE8(MBB, MI);
   default:
     return false;
   }
@@ -561,6 +571,102 @@ bool SM83ExpandPseudo::expandCMP16EQrr(MachineBasicBlock &MBB,
   emitLD(MBB, MI, DL, SM83::A, LHSHi);
   BuildMI(MBB, MI, DL, TII->get(SM83::XORr)).addReg(RHSHi);
   BuildMI(MBB, MI, DL, TII->get(SM83::ORr)).addReg(SM83::L);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandCMPC16rr(MachineBasicBlock &MBB,
+                                       MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register LHSReg = MI->getOperand(0).getReg();
+  Register RHSReg = MI->getOperand(1).getReg();
+  const SM83RegisterInfo &RI = TII->getRegisterInfo();
+  Register LHSLo = RI.getSubReg(LHSReg, SM83::sub_lo);
+  Register LHSHi = RI.getSubReg(LHSReg, SM83::sub_hi);
+  Register RHSLo = RI.getSubReg(RHSReg, SM83::sub_lo);
+  Register RHSHi = RI.getSubReg(RHSReg, SM83::sub_hi);
+
+  // LD A, lhs.lo; SBC A, rhs.lo (uses carry from previous compare in chain)
+  emitLD(MBB, MI, DL, SM83::A, LHSLo);
+  BuildMI(MBB, MI, DL, TII->get(SM83::SBCr)).addReg(RHSLo);
+  // LD A, lhs.hi; SBC A, rhs.hi
+  emitLD(MBB, MI, DL, SM83::A, LHSHi);
+  BuildMI(MBB, MI, DL, TII->get(SM83::SBCr)).addReg(RHSHi);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandSRL16(MachineBasicBlock &MBB,
+                                   MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register DstReg = MI->getOperand(0).getReg();
+  Register SrcReg = MI->getOperand(1).getReg();
+  const SM83RegisterInfo &RI = TII->getRegisterInfo();
+
+  Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
+  Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
+  Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
+  Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
+
+  // Copy src to dst, then shift by 1: SRL hi, RR lo.
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SrcLo);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstHi).addReg(SrcHi);
+  BuildMI(MBB, MI, DL, TII->get(SM83::SRLr), DstHi).addReg(DstHi);
+  BuildMI(MBB, MI, DL, TII->get(SM83::RRr), DstLo).addReg(DstLo);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandSRA16(MachineBasicBlock &MBB,
+                                   MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register DstReg = MI->getOperand(0).getReg();
+  Register SrcReg = MI->getOperand(1).getReg();
+  const SM83RegisterInfo &RI = TII->getRegisterInfo();
+
+  Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
+  Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
+  Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
+  Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
+
+  // Copy src to dst, then shift by 1: SRA hi, RR lo.
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SrcLo);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstHi).addReg(SrcHi);
+  BuildMI(MBB, MI, DL, TII->get(SM83::SRAr), DstHi).addReg(DstHi);
+  BuildMI(MBB, MI, DL, TII->get(SM83::RRr), DstLo).addReg(DstLo);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandLDH_LOAD8(MachineBasicBlock &MBB,
+                                       MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register DstReg = MI->getOperand(0).getReg();
+  MachineOperand &AddrOp = MI->getOperand(1);
+
+  // LDH A, [n]
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDH_An)).add(AddrOp);
+  // LD dst, A (skip if dst is already A)
+  emitLD(MBB, MI, DL, DstReg, SM83::A);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandLDH_STORE8(MachineBasicBlock &MBB,
+                                        MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register SrcReg = MI->getOperand(0).getReg();
+  MachineOperand &AddrOp = MI->getOperand(1);
+
+  // LD A, src (skip if src is already A)
+  emitLD(MBB, MI, DL, SM83::A, SrcReg);
+  // LDH [n], A
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDH_nA)).add(AddrOp);
 
   MI->eraseFromParent();
   return true;

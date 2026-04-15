@@ -19,6 +19,7 @@ add_llvm_target(SM83CodeGen
   SM83InstrInfo.cpp
   SM83ISelDAGToDAG.cpp
   SM83ISelLowering.cpp
+  SM83PeepholeOpt.cpp
   SM83MCInstLower.cpp
   SM83RegisterInfo.cpp
   SM83SelectionDAGInfo.cpp
