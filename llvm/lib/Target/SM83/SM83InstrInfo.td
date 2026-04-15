@@ -247,15 +247,6 @@ def OR8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
 def XOR8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
                     "# XOR8 $dst, $src1, $src2",
                     [(set i8:$dst, (xor i8:$src1, i8:$src2))]>;
-def SHL8r : Pseudo<(outs GPR8:$dst), (ins GPR8:$src, GPR8:$amt),
-                   "# SHL8 $dst, $src, $amt",
-                   [(set i8:$dst, (shl i8:$src, i8:$amt))]>;
-def SRL8r : Pseudo<(outs GPR8:$dst), (ins GPR8:$src, GPR8:$amt),
-                   "# SRL8 $dst, $src, $amt",
-                   [(set i8:$dst, (srl i8:$src, i8:$amt))]>;
-def SRA8r : Pseudo<(outs GPR8:$dst), (ins GPR8:$src, GPR8:$amt),
-                   "# SRA8 $dst, $src, $amt",
-                   [(set i8:$dst, (sra i8:$src, i8:$amt))]>;
 }
 
 // i16 ADD pseudo — expanded to copy to HL + ADD HL,rr.
@@ -283,23 +274,28 @@ def XOR16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
                      [(set i16:$dst, (xor i16:$src1, i16:$src2))]>;
 }
 
-// i16 shift left pseudo — SLA lo, RL hi (shift by 1).
-let Defs = [F] in
+// Variable-count shift pseudos — expanded in ISelLowering via custom inserter.
+// The zero-test (LD A, amt; OR A) clobbers A; all shifts clobber F.
+let usesCustomInserter = 1, Defs = [A, F] in {
+def SHL8r : Pseudo<(outs GPR8:$dst), (ins GPR8:$src, GPR8:$amt),
+                   "# SHL8 $dst, $src, $amt",
+                   [(set i8:$dst, (shl i8:$src, i8:$amt))]>;
+def SRL8r : Pseudo<(outs GPR8:$dst), (ins GPR8:$src, GPR8:$amt),
+                   "# SRL8 $dst, $src, $amt",
+                   [(set i8:$dst, (srl i8:$src, i8:$amt))]>;
+def SRA8r : Pseudo<(outs GPR8:$dst), (ins GPR8:$src, GPR8:$amt),
+                   "# SRA8 $dst, $src, $amt",
+                   [(set i8:$dst, (sra i8:$src, i8:$amt))]>;
 def SHL16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src, GPR8:$amt),
                      "# SHL16 $dst, $src, $amt",
                      [(set i16:$dst, (shl i16:$src, (i8 GPR8:$amt)))]>;
-
-// i16 shift right logical — SRL hi, RR lo (shift by 1).
-let Defs = [F] in
 def SRL16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src, GPR8:$amt),
                      "# SRL16 $dst, $src, $amt",
                      [(set i16:$dst, (srl i16:$src, (i8 GPR8:$amt)))]>;
-
-// i16 shift right arithmetic — SRA hi, RR lo (shift by 1).
-let Defs = [F] in
 def SRA16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src, GPR8:$amt),
                      "# SRA16 $dst, $src, $amt",
                      [(set i16:$dst, (sra i16:$src, (i8 GPR8:$amt)))]>;
+}
 
 // i16 load/store from global address.
 let mayLoad = 1, hasSideEffects = 0 in
@@ -667,9 +663,11 @@ def RRCr : SM83Inst16<(outs GPR8:$dst), (ins GPR8:$src), "rrc\t$dst", []> {
 }
 def RLr : SM83Inst16<(outs GPR8:$dst), (ins GPR8:$src), "rl\t$dst", []> {
   let Constraints = "$src = $dst";
+  let Uses = [F];
 }
 def RRr : SM83Inst16<(outs GPR8:$dst), (ins GPR8:$src), "rr\t$dst", []> {
   let Constraints = "$src = $dst";
+  let Uses = [F];
 }
 def SLAr : SM83Inst16<(outs GPR8:$dst), (ins GPR8:$src), "sla\t$dst", []> {
   let Constraints = "$src = $dst";

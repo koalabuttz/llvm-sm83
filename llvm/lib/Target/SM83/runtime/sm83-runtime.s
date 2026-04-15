@@ -159,6 +159,101 @@ __umodhi3:
 	ret
 
 ; ==========================================================================
+; __divhi3 — signed 16-bit divide
+; In:  BC = dividend (signed), DE = divisor (signed)
+; Out: HL = quotient (signed, truncated toward zero)
+; Uses: A, B, C, D, E, H, L, F, SP
+; ==========================================================================
+	.global __divhi3
+__divhi3:
+	; Compute result sign: XOR high bytes (bit 7 = quotient sign)
+	ld a, b
+	xor d               ; A[7] = 1 iff result is negative
+	push af             ; save sign across call
+	; |BC| (if B[7] set, negate BC)
+	bit 7, b
+	jr z, .divhi3_dpos
+	ld a, c
+	cpl
+	ld c, a
+	ld a, b
+	cpl
+	ld b, a
+	inc bc
+.divhi3_dpos:
+	; |DE| (if D[7] set, negate DE)
+	bit 7, d
+	jr z, .divhi3_epos
+	ld a, e
+	cpl
+	ld e, a
+	ld a, d
+	cpl
+	ld d, a
+	inc de
+.divhi3_epos:
+	call __udivhi3      ; HL = |quotient|
+	pop af              ; restore sign
+	bit 7, a
+	ret z               ; positive result, done
+	; Negate HL
+	ld a, l
+	cpl
+	ld l, a
+	ld a, h
+	cpl
+	ld h, a
+	inc hl
+	ret
+
+; ==========================================================================
+; __modhi3 — signed 16-bit modulo
+; In:  BC = dividend (signed), DE = divisor (signed)
+; Out: HL = remainder (signed, same sign as dividend)
+; Uses: A, B, C, D, E, H, L, F, SP
+; ==========================================================================
+	.global __modhi3
+__modhi3:
+	; Save sign of dividend (B[7])
+	ld a, b
+	push af             ; A[7] = sign of dividend
+	; |BC|
+	bit 7, b
+	jr z, .modhi3_dpos
+	ld a, c
+	cpl
+	ld c, a
+	ld a, b
+	cpl
+	ld b, a
+	inc bc
+.modhi3_dpos:
+	; |DE|
+	bit 7, d
+	jr z, .modhi3_epos
+	ld a, e
+	cpl
+	ld e, a
+	ld a, d
+	cpl
+	ld d, a
+	inc de
+.modhi3_epos:
+	call __umodhi3      ; HL = |remainder|
+	pop af              ; restore sign of dividend
+	bit 7, a
+	ret z               ; positive dividend → positive remainder
+	; Negate HL (apply sign of dividend)
+	ld a, l
+	cpl
+	ld l, a
+	ld a, h
+	cpl
+	ld h, a
+	inc hl
+	ret
+
+; ==========================================================================
 ; __divqi3 — signed 8-bit divide
 ; In:  A = dividend (signed), E = divisor (signed)
 ; Out: A = quotient (signed, truncated toward zero)

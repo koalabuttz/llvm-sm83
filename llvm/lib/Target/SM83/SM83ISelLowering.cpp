@@ -516,8 +516,163 @@ SDValue SM83TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
   return DAG.getNode(SM83ISD::SELECT_CC, DL, MVT::i8, One, Zero, CCVal, Cmp);
 }
 
+MachineBasicBlock *SM83TargetLowering::insertShift(MachineInstr &MI,
+                                                   MachineBasicBlock *MBB) const {
+  const TargetInstrInfo &TII = *Subtarget.getInstrInfo();
+  MachineFunction *MF = MBB->getParent();
+  MachineRegisterInfo &MRI = MF->getRegInfo();
+  DebugLoc DL = MI.getDebugLoc();
+
+  unsigned Opc = MI.getOpcode();
+  bool Is16 = (Opc == SM83::SHL16rr || Opc == SM83::SRL16rr ||
+               Opc == SM83::SRA16rr);
+
+  Register DstReg = MI.getOperand(0).getReg();
+  Register SrcReg = MI.getOperand(1).getReg();
+  Register AmtReg = MI.getOperand(2).getReg();
+
+  // Create loop and done MBBs.
+  MachineBasicBlock *LoopMBB = MF->CreateMachineBasicBlock(MBB->getBasicBlock());
+  MachineBasicBlock *DoneMBB = MF->CreateMachineBasicBlock(MBB->getBasicBlock());
+
+  MF->insert(++MBB->getIterator(), LoopMBB);
+  MF->insert(++LoopMBB->getIterator(), DoneMBB);
+
+  // Move everything after MI into DoneMBB.
+  DoneMBB->splice(DoneMBB->begin(), MBB,
+                  std::next(MachineBasicBlock::iterator(MI)), MBB->end());
+  DoneMBB->transferSuccessorsAndUpdatePHIs(MBB);
+
+  // Set up successors.
+  MBB->addSuccessor(LoopMBB);
+  MBB->addSuccessor(DoneMBB);
+  LoopMBB->addSuccessor(LoopMBB); // back-edge
+  LoopMBB->addSuccessor(DoneMBB);
+
+  if (Is16) {
+    // Extract lo/hi virtual registers from the GR16 source.
+    Register SrcLo = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+    Register SrcHi = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+    BuildMI(*MBB, MI, DL, TII.get(TargetOpcode::COPY), SrcLo)
+        .addReg(SrcReg, RegState::NoFlags, SM83::sub_lo);
+    BuildMI(*MBB, MI, DL, TII.get(TargetOpcode::COPY), SrcHi)
+        .addReg(SrcReg, RegState::NoFlags, SM83::sub_hi);
+
+    // Zero-test: LD A, amt; OR A → Z=1 if amt==0.
+    BuildMI(*MBB, MI, DL, TII.get(SM83::LDrr), SM83::A).addReg(AmtReg);
+    BuildMI(*MBB, MI, DL, TII.get(SM83::ORr)).addReg(SM83::A);
+    BuildMI(*MBB, MI, DL, TII.get(SM83::JRcc)).addImm(1).addMBB(DoneMBB);
+
+    // Create loop vregs.
+    Register ValLo  = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+    Register ValHi  = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+    Register CntReg = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+    Register ShiftedLo = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+    Register ShiftedHi = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+    Register DecCnt    = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+
+    // LoopMBB PHIs (must be first instructions).
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::PHI), ValLo)
+        .addReg(SrcLo).addMBB(MBB).addReg(ShiftedLo).addMBB(LoopMBB);
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::PHI), ValHi)
+        .addReg(SrcHi).addMBB(MBB).addReg(ShiftedHi).addMBB(LoopMBB);
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::PHI), CntReg)
+        .addReg(AmtReg).addMBB(MBB).addReg(DecCnt).addMBB(LoopMBB);
+
+    // Shift body: direction-specific carry-propagating pair.
+    if (Opc == SM83::SHL16rr) {
+      // SHL: SLA lo (carry = old bit 7 of lo), RL hi (new bit 0 = carry).
+      BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::SLAr), ShiftedLo)
+          .addReg(ValLo);
+      BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::RLr), ShiftedHi)
+          .addReg(ValHi);
+    } else if (Opc == SM83::SRL16rr) {
+      // SRL: SRL hi (carry = old bit 0 of hi), RR lo (new bit 7 = carry).
+      BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::SRLr), ShiftedHi)
+          .addReg(ValHi);
+      BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::RRr), ShiftedLo)
+          .addReg(ValLo);
+    } else {
+      // SRA: SRA hi (arithmetic; carry = old bit 0 of hi), RR lo.
+      BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::SRAr), ShiftedHi)
+          .addReg(ValHi);
+      BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::RRr), ShiftedLo)
+          .addReg(ValLo);
+    }
+
+    // Decrement count and branch back.
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::DECr), DecCnt)
+        .addReg(CntReg);
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::JRcc))
+        .addImm(0).addMBB(LoopMBB); // NZ=0
+
+    // DoneMBB: PHIs for lo/hi result, then REG_SEQUENCE to reconstruct GR16.
+    auto InsertPt = DoneMBB->begin();
+    Register ResultLo = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+    Register ResultHi = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+    BuildMI(*DoneMBB, InsertPt, DL, TII.get(SM83::PHI), ResultLo)
+        .addReg(SrcLo).addMBB(MBB).addReg(ShiftedLo).addMBB(LoopMBB);
+    BuildMI(*DoneMBB, InsertPt, DL, TII.get(SM83::PHI), ResultHi)
+        .addReg(SrcHi).addMBB(MBB).addReg(ShiftedHi).addMBB(LoopMBB);
+    BuildMI(*DoneMBB, InsertPt, DL, TII.get(TargetOpcode::REG_SEQUENCE), DstReg)
+        .addReg(ResultLo).addImm(SM83::sub_lo)
+        .addReg(ResultHi).addImm(SM83::sub_hi);
+  } else {
+    // 8-bit case: single-register shift loop.
+
+    // Zero-test: LD A, amt; OR A → Z=1 if amt==0.
+    BuildMI(*MBB, MI, DL, TII.get(SM83::LDrr), SM83::A).addReg(AmtReg);
+    BuildMI(*MBB, MI, DL, TII.get(SM83::ORr)).addReg(SM83::A);
+    BuildMI(*MBB, MI, DL, TII.get(SM83::JRcc)).addImm(1).addMBB(DoneMBB);
+
+    Register ValReg     = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+    Register CntReg     = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+    Register ShiftedReg = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+    Register DecCnt     = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+
+    // Select the hardware shift opcode.
+    unsigned ShiftOpc;
+    if (Opc == SM83::SHL8r) ShiftOpc = SM83::SLAr;
+    else if (Opc == SM83::SRL8r) ShiftOpc = SM83::SRLr;
+    else ShiftOpc = SM83::SRAr;
+
+    // LoopMBB PHIs.
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::PHI), ValReg)
+        .addReg(SrcReg).addMBB(MBB).addReg(ShiftedReg).addMBB(LoopMBB);
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::PHI), CntReg)
+        .addReg(AmtReg).addMBB(MBB).addReg(DecCnt).addMBB(LoopMBB);
+
+    // Shift by 1, decrement count, branch back.
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(ShiftOpc), ShiftedReg)
+        .addReg(ValReg);
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::DECr), DecCnt)
+        .addReg(CntReg);
+    BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(SM83::JRcc))
+        .addImm(0).addMBB(LoopMBB); // NZ=0
+
+    // DoneMBB: PHI selects src (amt==0 path) or shifted result.
+    BuildMI(*DoneMBB, DoneMBB->begin(), DL, TII.get(SM83::PHI), DstReg)
+        .addReg(SrcReg).addMBB(MBB).addReg(ShiftedReg).addMBB(LoopMBB);
+  }
+
+  MI.eraseFromParent();
+  return DoneMBB;
+}
+
 MachineBasicBlock *SM83TargetLowering::EmitInstrWithCustomInserter(
     MachineInstr &MI, MachineBasicBlock *MBB) const {
+  switch (MI.getOpcode()) {
+  case SM83::SHL8r:
+  case SM83::SRL8r:
+  case SM83::SRA8r:
+  case SM83::SHL16rr:
+  case SM83::SRL16rr:
+  case SM83::SRA16rr:
+    return insertShift(MI, MBB);
+  default:
+    break;
+  }
+
   // Handle SELECT8 / SELECT16 pseudos.
   assert((MI.getOpcode() == SM83::SELECT8 ||
           MI.getOpcode() == SM83::SELECT16) && "Unexpected pseudo");

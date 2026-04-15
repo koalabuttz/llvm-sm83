@@ -51,8 +51,6 @@ private:
               const DebugLoc &DL, Register DstReg, Register SrcReg);
   bool expandALU8rr(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
                     unsigned ALUOpc);
-  bool expandShift8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
-                    unsigned ShiftOpc);
   bool expandCMP8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandBRCOND(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLOAD8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
@@ -60,7 +58,6 @@ private:
   bool expandADD16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandBitwise16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
                        unsigned LoOpc, unsigned HiOpc);
-  bool expandSHL16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLOAD16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandSTORE16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLOAD_STACK8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
@@ -76,8 +73,6 @@ private:
   bool expandCMP16rr(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandCMPC16rr(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandCMP16EQrr(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
-  bool expandSRL16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
-  bool expandSRA16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLDH_LOAD8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLDH_STORE8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
 };
@@ -114,9 +109,6 @@ bool SM83ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case SM83::AND8rr: return expandALU8rr(MBB, MI, SM83::ANDr);
   case SM83::OR8rr:  return expandALU8rr(MBB, MI, SM83::ORr);
   case SM83::XOR8rr: return expandALU8rr(MBB, MI, SM83::XORr);
-  case SM83::SHL8r:  return expandShift8(MBB, MI, SM83::SLAr);
-  case SM83::SRL8r:  return expandShift8(MBB, MI, SM83::SRLr);
-  case SM83::SRA8r:  return expandShift8(MBB, MI, SM83::SRAr);
   case SM83::CMP8rr: return expandCMP8(MBB, MI);
   case SM83::BRCONDcc: return expandBRCOND(MBB, MI);
   case SM83::LOAD8: return expandLOAD8(MBB, MI);
@@ -128,7 +120,6 @@ bool SM83ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case SM83::AND16rr: return expandBitwise16(MBB, MI, SM83::ANDr, SM83::ANDr);
   case SM83::OR16rr:  return expandBitwise16(MBB, MI, SM83::ORr, SM83::ORr);
   case SM83::XOR16rr: return expandBitwise16(MBB, MI, SM83::XORr, SM83::XORr);
-  case SM83::SHL16rr: return expandSHL16(MBB, MI);
   case SM83::LOAD_STACK8: return expandLOAD_STACK8(MBB, MI);
   case SM83::STORE_STACK8: return expandSTORE_STACK8(MBB, MI);
   case SM83::LOAD_FI8: return expandLOAD_STACK8(MBB, MI);
@@ -144,8 +135,6 @@ bool SM83ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case SM83::CMP16rr: return expandCMP16rr(MBB, MI);
   case SM83::CMPC16rr: return expandCMPC16rr(MBB, MI);
   case SM83::CMP16EQrr: return expandCMP16EQrr(MBB, MI);
-  case SM83::SRL16rr: return expandSRL16(MBB, MI);
-  case SM83::SRA16rr: return expandSRA16(MBB, MI);
   case SM83::LDH_LOAD8: return expandLDH_LOAD8(MBB, MI);
   case SM83::LDH_STORE8: return expandLDH_STORE8(MBB, MI);
   default:
@@ -177,26 +166,6 @@ bool SM83ExpandPseudo::expandALU8rr(MachineBasicBlock &MBB,
       .addReg(Src2Reg);
   // LD dst, A (skip if already A)
   emitLD(MBB, MI, DL, DstReg, SM83::A);
-
-  MI->eraseFromParent();
-  return true;
-}
-
-bool SM83ExpandPseudo::expandShift8(MachineBasicBlock &MBB,
-                                    MachineBasicBlock::iterator MI,
-                                    unsigned ShiftOpc) {
-  // For simplicity, shift by 1 and loop. This is a placeholder —
-  // a proper implementation would handle known shift amounts.
-  DebugLoc DL = MI->getDebugLoc();
-  Register DstReg = MI->getOperand(0).getReg();
-  Register SrcReg = MI->getOperand(1).getReg();
-
-  // Copy src to dst, then shift dst by 1.
-  // TODO: handle variable shift amounts with a loop.
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstReg)
-      .addReg(SrcReg);
-  BuildMI(MBB, MI, DL, TII->get(ShiftOpc), DstReg)
-      .addReg(DstReg);
 
   MI->eraseFromParent();
   return true;
@@ -282,28 +251,6 @@ bool SM83ExpandPseudo::expandBitwise16(MachineBasicBlock &MBB,
   emitLD(MBB, MI, DL, SM83::A, Src1Hi);
   BuildMI(MBB, MI, DL, TII->get(HiOpc)).addReg(Src2Hi);
   emitLD(MBB, MI, DL, DstHi, SM83::A);
-
-  MI->eraseFromParent();
-  return true;
-}
-
-bool SM83ExpandPseudo::expandSHL16(MachineBasicBlock &MBB,
-                                   MachineBasicBlock::iterator MI) {
-  DebugLoc DL = MI->getDebugLoc();
-  Register DstReg = MI->getOperand(0).getReg();
-  Register SrcReg = MI->getOperand(1).getReg();
-  const SM83RegisterInfo &RI = TII->getRegisterInfo();
-
-  Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
-  Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
-  Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
-  Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
-
-  // Copy src to dst, then shift by 1: SLA lo, RL hi.
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SrcLo);
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstHi).addReg(SrcHi);
-  BuildMI(MBB, MI, DL, TII->get(SM83::SLAr), DstLo).addReg(DstLo);
-  BuildMI(MBB, MI, DL, TII->get(SM83::RLr), DstHi).addReg(DstHi);
 
   MI->eraseFromParent();
   return true;
@@ -655,54 +602,6 @@ bool SM83ExpandPseudo::expandCMPC16rr(MachineBasicBlock &MBB,
   // LD A, lhs.hi; SBC A, rhs.hi
   emitLD(MBB, MI, DL, SM83::A, LHSHi);
   BuildMI(MBB, MI, DL, TII->get(SM83::SBCr)).addReg(RHSHi);
-
-  MI->eraseFromParent();
-  return true;
-}
-
-bool SM83ExpandPseudo::expandSRL16(MachineBasicBlock &MBB,
-                                   MachineBasicBlock::iterator MI) {
-  DebugLoc DL = MI->getDebugLoc();
-  Register DstReg = MI->getOperand(0).getReg();
-  Register SrcReg = MI->getOperand(1).getReg();
-  const SM83RegisterInfo &RI = TII->getRegisterInfo();
-
-  Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
-  Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
-  Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
-  Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
-  assert(SrcLo && SrcHi && "SRC reg missing sub_lo/sub_hi in SRL16 expansion");
-  assert(DstLo && DstHi && "DST reg missing sub_lo/sub_hi in SRL16 expansion");
-
-  // Copy src to dst, then shift by 1: SRL hi, RR lo.
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SrcLo);
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstHi).addReg(SrcHi);
-  BuildMI(MBB, MI, DL, TII->get(SM83::SRLr), DstHi).addReg(DstHi);
-  BuildMI(MBB, MI, DL, TII->get(SM83::RRr), DstLo).addReg(DstLo);
-
-  MI->eraseFromParent();
-  return true;
-}
-
-bool SM83ExpandPseudo::expandSRA16(MachineBasicBlock &MBB,
-                                   MachineBasicBlock::iterator MI) {
-  DebugLoc DL = MI->getDebugLoc();
-  Register DstReg = MI->getOperand(0).getReg();
-  Register SrcReg = MI->getOperand(1).getReg();
-  const SM83RegisterInfo &RI = TII->getRegisterInfo();
-
-  Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
-  Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
-  Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
-  Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
-  assert(SrcLo && SrcHi && "SRC reg missing sub_lo/sub_hi in SRA16 expansion");
-  assert(DstLo && DstHi && "DST reg missing sub_lo/sub_hi in SRA16 expansion");
-
-  // Copy src to dst, then shift by 1: SRA hi, RR lo.
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SrcLo);
-  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstHi).addReg(SrcHi);
-  BuildMI(MBB, MI, DL, TII->get(SM83::SRAr), DstHi).addReg(DstHi);
-  BuildMI(MBB, MI, DL, TII->get(SM83::RRr), DstLo).addReg(DstLo);
 
   MI->eraseFromParent();
   return true;

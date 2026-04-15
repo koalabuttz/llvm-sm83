@@ -35,6 +35,9 @@ public:
                               MachineBasicBlock *MBB) const override;
 
 private:
+  MachineBasicBlock *insertShift(MachineInstr &MI,
+                                  MachineBasicBlock *MBB) const;
+
   SDValue LowerATOMIC_LOAD(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerATOMIC_STORE(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
