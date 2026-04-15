@@ -38,6 +38,14 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   setSchedulingPreference(Sched::RegPressure);
   setStackPointerRegisterToSaveRestore(SM83::SP);
 
+  // Load/store extension actions (like AVR and MSP430).
+  for (MVT VT : {MVT::i8, MVT::i16}) {
+    setLoadExtAction(ISD::EXTLOAD, VT, MVT::i1, Promote);
+    setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i1, Promote);
+    setLoadExtAction(ISD::ZEXTLOAD, VT, MVT::i1, Promote);
+  }
+  setLoadExtAction(ISD::SEXTLOAD, MVT::i16, MVT::i8, Expand);
+  setTruncStoreAction(MVT::i16, MVT::i8, Expand);
 
   // Custom lowering.
   setOperationAction(ISD::GlobalAddress, MVT::i16, Custom);
@@ -127,6 +135,48 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
     setOperationAction(ISD::CTTZ, VT, Expand);
     setOperationAction(ISD::BSWAP, VT, Expand);
     setOperationAction(ISD::SIGN_EXTEND_INREG, VT, Expand);
+  }
+
+  // SM83 has no FPU. LLVM auto-softens FP types since no FP register class
+  // is registered, but we must mark FP operations explicitly to prevent
+  // the legalizer from generating unsupported libcalls that crash.
+  for (MVT VT : {MVT::f32, MVT::f64, MVT::f128}) {
+    setOperationAction(ISD::FADD, VT, Expand);
+    setOperationAction(ISD::FSUB, VT, Expand);
+    setOperationAction(ISD::FMUL, VT, Expand);
+    setOperationAction(ISD::FDIV, VT, Expand);
+    setOperationAction(ISD::FREM, VT, Expand);
+    setOperationAction(ISD::FNEG, VT, Expand);
+    setOperationAction(ISD::FABS, VT, Expand);
+    setOperationAction(ISD::FSQRT, VT, Expand);
+    setOperationAction(ISD::FSIN, VT, Expand);
+    setOperationAction(ISD::FCOS, VT, Expand);
+    setOperationAction(ISD::FPOW, VT, Expand);
+    setOperationAction(ISD::FLOG, VT, Expand);
+    setOperationAction(ISD::FLOG2, VT, Expand);
+    setOperationAction(ISD::FLOG10, VT, Expand);
+    setOperationAction(ISD::FEXP, VT, Expand);
+    setOperationAction(ISD::FEXP2, VT, Expand);
+    setOperationAction(ISD::FCEIL, VT, Expand);
+    setOperationAction(ISD::FFLOOR, VT, Expand);
+    setOperationAction(ISD::FROUND, VT, Expand);
+    setOperationAction(ISD::FTRUNC, VT, Expand);
+    setOperationAction(ISD::FRINT, VT, Expand);
+    setOperationAction(ISD::FNEARBYINT, VT, Expand);
+    setOperationAction(ISD::FP_TO_SINT, VT, Expand);
+    setOperationAction(ISD::FP_TO_UINT, VT, Expand);
+    setOperationAction(ISD::SINT_TO_FP, VT, Expand);
+    setOperationAction(ISD::UINT_TO_FP, VT, Expand);
+    setOperationAction(ISD::FP_ROUND, VT, Expand);
+    setOperationAction(ISD::FP_EXTEND, VT, Expand);
+    setOperationAction(ISD::FCOPYSIGN, VT, Expand);
+    setOperationAction(ISD::FMA, VT, Expand);
+    setOperationAction(ISD::FMINNUM, VT, Expand);
+    setOperationAction(ISD::FMAXNUM, VT, Expand);
+    setOperationAction(ISD::BR_CC, VT, Expand);
+    setOperationAction(ISD::SETCC, VT, Expand);
+    setOperationAction(ISD::SELECT, VT, Expand);
+    setOperationAction(ISD::SELECT_CC, VT, Expand);
   }
 
   setMinFunctionAlignment(Align(1));
