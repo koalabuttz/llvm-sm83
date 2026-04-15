@@ -52,10 +52,25 @@ def SM83AsmWriter : AsmWriter {
 }
 
 //===----------------------------------------------------------------------===//
+// Assembly Parser
+//===----------------------------------------------------------------------===//
+
+def SM83AsmParser : AsmParser {
+  let ShouldEmitMatchRegisterName = 1;
+}
+
+def SM83AsmParserVariant : AsmParserVariant {
+  int Variant = 0;
+  string TokenizingCharacters = "[]+-";
+}
+
+//===----------------------------------------------------------------------===//
 // Target Declaration
 //===----------------------------------------------------------------------===//
 
 def SM83 : Target {
   let InstructionSet = SM83InstrInfo;
   let AssemblyWriters = [SM83AsmWriter];
+  let AssemblyParsers = [SM83AsmParser];
+  let AssemblyParserVariants = [SM83AsmParserVariant];
 }

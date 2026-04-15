@@ -82,8 +82,15 @@ def imm8s : Operand<i8> {
 def brtarget : Operand<OtherVT>;
 
 // Condition codes for SM83: NZ=0, Z=1, NC=2, C=3
+def SM83CondCodeAsmOperand : AsmOperandClass {
+  let Name = "CondCode";
+  let PredicateMethod = "isCondCode";
+  let RenderMethod = "addCondCodeOperands";
+}
+
 def SM83condcode : Operand<i8> {
   let PrintMethod = "printCondCode";
+  let ParserMatchClass = SM83CondCodeAsmOperand;
 }
 
 //===----------------------------------------------------------------------===//
