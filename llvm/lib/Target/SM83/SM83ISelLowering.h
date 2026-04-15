@@ -41,6 +41,9 @@ private:
   SDValue LowerSELECT_CC(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSETCC(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerMUL(SDValue Op, SelectionDAG &DAG) const;
+  SDValue emitCmp(SDValue LHS, SDValue RHS, ISD::CondCode CC,
+                  bool NeedSignFlip, SelectionDAG &DAG,
+                  const SDLoc &DL) const;
 
   SDValue LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv,
                                bool isVarArg,

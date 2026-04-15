@@ -46,8 +46,6 @@ __mulhi3:
 	; Shift DE right 1 bit; if carry (old bit 0), add BC to HL
 	srl d               ; D >>= 1, LSB → carry
 	rr e                ; E = (carry << 7) | (E >> 1); old E LSB → carry
-	; Oops: we want to test bit 0 of DE before shifting.
-	; Correct approach: test bit 0, then shift.
 	jr nc, .mulhi3_nonadd
 	; HL += BC
 	ld a, l
@@ -176,27 +174,31 @@ __divqi3:
 	ld a, b
 	bit 7, a
 	jr z, .divqi3_dpos
-	neg
+	cpl
+	inc a
 .divqi3_dpos:
 	; |divisor|
 	ld e, c
 	bit 7, e
 	jr z, .divqi3_epos
 	ld a, e
-	neg
+	cpl
+	inc a
 	ld e, a
 	; restore A = |dividend|
 	ld a, b
 	bit 7, a
 	jr z, .divqi3_epos
-	neg
+	cpl
+	inc a
 .divqi3_epos:
 	; A = |dividend|, E = |divisor| — do unsigned divide
 	call __udivqi3      ; A = |quotient|
 	; Apply sign
 	bit 7, d
 	ret z               ; positive
-	neg
+	cpl
+	inc a
 	ret
 
 ; ==========================================================================
@@ -212,25 +214,29 @@ __modqi3:
 	; |dividend|
 	bit 7, a
 	jr z, .modqi3_dpos
-	neg
+	cpl
+	inc a
 .modqi3_dpos:
 	; |divisor|
 	ld e, c
 	bit 7, e
 	jr z, .modqi3_epos
 	ld a, e
-	neg
+	cpl
+	inc a
 	ld e, a
 	ld a, b
 	bit 7, a
 	jr z, .modqi3_epos
-	neg
+	cpl
+	inc a
 .modqi3_epos:
 	call __umodqi3      ; A = |remainder|
 	; Apply sign of dividend
 	bit 7, b
 	ret z
-	neg
+	cpl
+	inc a
 	ret
 
 ; ==========================================================================
@@ -274,17 +280,17 @@ memset:
 	or l
 	pop af
 	ret z
-	; HL = dst pointer (copy from BC)
+	; HL = dst pointer (copy from BC), B = fill value (BC is pushed)
 	push bc
 	ld h, b
 	ld l, c
+	ld b, a             ; save fill value in B
 .memset_loop:
+	ld a, b             ; reload fill value
 	ld [hl+], a         ; *dst++ = value (HL post-increment)
 	dec de              ; n--
-	ld b, d
-	ld c, e
-	ld a, b
-	or c
+	ld a, d
+	or e
 	jr nz, .memset_loop
 	pop bc              ; restore original dst pointer
 	ret

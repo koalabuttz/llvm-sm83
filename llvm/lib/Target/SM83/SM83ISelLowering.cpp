@@ -200,6 +200,25 @@ static void applySignFlip(SDValue &LHS, SDValue &RHS, SelectionDAG &DAG,
   RHS = DAG.getNode(ISD::XOR, DL, MVT::i8, RHS, Flip);
 }
 
+SDValue SM83TargetLowering::emitCmp(SDValue LHS, SDValue RHS,
+                                    ISD::CondCode CC, bool NeedSignFlip,
+                                    SelectionDAG &DAG,
+                                    const SDLoc &DL) const {
+  if (LHS.getValueType() == MVT::i16) {
+    if (CC == ISD::SETEQ || CC == ISD::SETNE)
+      return DAG.getNode(SM83ISD::CMP16EQ, DL, MVT::Glue, LHS, RHS);
+    if (NeedSignFlip) {
+      SDValue Flip = DAG.getConstant(0x8000, DL, MVT::i16);
+      LHS = DAG.getNode(ISD::XOR, DL, MVT::i16, LHS, Flip);
+      RHS = DAG.getNode(ISD::XOR, DL, MVT::i16, RHS, Flip);
+    }
+    return DAG.getNode(SM83ISD::CMP16, DL, MVT::Glue, LHS, RHS);
+  }
+  if (NeedSignFlip)
+    applySignFlip(LHS, RHS, DAG, DL);
+  return DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
+}
+
 SDValue SM83TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
   SDValue Chain = Op.getOperand(0);
@@ -210,28 +229,7 @@ SDValue SM83TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
 
   bool NeedSignFlip;
   unsigned SM83CC = mapCondCode(CC, LHS, RHS, DAG, DL, NeedSignFlip);
-
-  SDValue Cmp;
-  if (LHS.getValueType() == MVT::i16) {
-    if (CC == ISD::SETEQ || CC == ISD::SETNE) {
-      // 16-bit equality: XOR both bytes inside the pseudo, set Z flag.
-      Cmp = DAG.getNode(SM83ISD::CMP16EQ, DL, MVT::Glue, LHS, RHS);
-    } else {
-      // 16-bit ordering: CP lo bytes + SBC hi bytes → C flag = (lhs < rhs).
-      // For signed: flip bit 15 of both (XOR 0x8000) to convert to unsigned ordering.
-      if (NeedSignFlip) {
-        SDValue Flip = DAG.getConstant(0x8000, DL, MVT::i16);
-        LHS = DAG.getNode(ISD::XOR, DL, MVT::i16, LHS, Flip);
-        RHS = DAG.getNode(ISD::XOR, DL, MVT::i16, RHS, Flip);
-      }
-      Cmp = DAG.getNode(SM83ISD::CMP16, DL, MVT::Glue, LHS, RHS);
-    }
-  } else {
-    if (NeedSignFlip)
-      applySignFlip(LHS, RHS, DAG, DL);
-    Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
-  }
-
+  SDValue Cmp = emitCmp(LHS, RHS, CC, NeedSignFlip, DAG, DL);
   SDValue CCVal = DAG.getConstant(SM83CC, DL, MVT::i8);
   return DAG.getNode(SM83ISD::BRCOND, DL, MVT::Other, Chain, Dest, CCVal, Cmp);
 }
@@ -247,25 +245,7 @@ SDValue SM83TargetLowering::LowerSELECT_CC(SDValue Op,
 
   bool NeedSignFlip;
   unsigned SM83CC = mapCondCode(CC, LHS, RHS, DAG, DL, NeedSignFlip);
-
-  SDValue Cmp;
-  if (LHS.getValueType() == MVT::i16) {
-    if (CC == ISD::SETEQ || CC == ISD::SETNE) {
-      Cmp = DAG.getNode(SM83ISD::CMP16EQ, DL, MVT::Glue, LHS, RHS);
-    } else {
-      if (NeedSignFlip) {
-        SDValue Flip = DAG.getConstant(0x8000, DL, MVT::i16);
-        LHS = DAG.getNode(ISD::XOR, DL, MVT::i16, LHS, Flip);
-        RHS = DAG.getNode(ISD::XOR, DL, MVT::i16, RHS, Flip);
-      }
-      Cmp = DAG.getNode(SM83ISD::CMP16, DL, MVT::Glue, LHS, RHS);
-    }
-  } else {
-    if (NeedSignFlip)
-      applySignFlip(LHS, RHS, DAG, DL);
-    Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
-  }
-
+  SDValue Cmp = emitCmp(LHS, RHS, CC, NeedSignFlip, DAG, DL);
   SDValue CCVal = DAG.getConstant(SM83CC, DL, MVT::i8);
   return DAG.getNode(SM83ISD::SELECT_CC, DL, Op.getValueType(),
                      TrueVal, FalseVal, CCVal, Cmp);
@@ -279,25 +259,7 @@ SDValue SM83TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
 
   bool NeedSignFlip;
   unsigned SM83CC = mapCondCode(CC, LHS, RHS, DAG, DL, NeedSignFlip);
-
-  SDValue Cmp;
-  if (LHS.getValueType() == MVT::i16) {
-    if (CC == ISD::SETEQ || CC == ISD::SETNE) {
-      Cmp = DAG.getNode(SM83ISD::CMP16EQ, DL, MVT::Glue, LHS, RHS);
-    } else {
-      if (NeedSignFlip) {
-        SDValue Flip = DAG.getConstant(0x8000, DL, MVT::i16);
-        LHS = DAG.getNode(ISD::XOR, DL, MVT::i16, LHS, Flip);
-        RHS = DAG.getNode(ISD::XOR, DL, MVT::i16, RHS, Flip);
-      }
-      Cmp = DAG.getNode(SM83ISD::CMP16, DL, MVT::Glue, LHS, RHS);
-    }
-  } else {
-    if (NeedSignFlip)
-      applySignFlip(LHS, RHS, DAG, DL);
-    Cmp = DAG.getNode(SM83ISD::CMP, DL, MVT::Glue, LHS, RHS);
-  }
-
+  SDValue Cmp = emitCmp(LHS, RHS, CC, NeedSignFlip, DAG, DL);
   SDValue CCVal = DAG.getConstant(SM83CC, DL, MVT::i8);
   SDValue Zero = DAG.getConstant(0, DL, MVT::i8);
   SDValue One = DAG.getConstant(1, DL, MVT::i8);

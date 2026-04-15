@@ -104,60 +104,61 @@ def SELECT8 : Pseudo<(outs GPR8:$dst),
 
 // Load/Store pseudos for global address access.
 // These expand to: LD HL, addr / LD r, (HL)  or  LD HL, addr / LD (HL), r
-let mayLoad = 1, hasSideEffects = 0 in
+let mayLoad = 1, hasSideEffects = 0, Defs = [HL] in
 def LOAD8 : Pseudo<(outs GPR8:$dst), (ins i16imm:$addr),
                    "# LOAD8 $dst, [$addr]",
                    [(set i8:$dst, (load (SM83Wrapper tglobaladdr:$addr)))]>;
 
-let mayStore = 1, hasSideEffects = 0 in
+let mayStore = 1, hasSideEffects = 0, Defs = [HL] in
 def STORE8 : Pseudo<(outs), (ins GPR8:$src, i16imm:$addr),
                     "# STORE8 [$addr], $src",
                     [(store i8:$src, (SM83Wrapper tglobaladdr:$addr))]>;
 
 // Load/store from frame index (stack-allocated local variables).
 // Selected manually in ISelDAGToDAG for loads/stores to frame indices.
-let mayLoad = 1, hasSideEffects = 0 in
+let mayLoad = 1, hasSideEffects = 0, Defs = [HL, F] in
 def LOAD_FI8 : Pseudo<(outs GPR8:$dst), (ins i16imm:$fi),
                       "# LOAD_FI8 $dst, [$fi]", []>;
 
-let mayStore = 1, hasSideEffects = 0 in
+let mayStore = 1, hasSideEffects = 0, Defs = [HL, F] in
 def STORE_FI8 : Pseudo<(outs), (ins GPR8:$src, i16imm:$fi),
                        "# STORE_FI8 [$fi], $src", []>;
 
 // i16 frame index load/store — for 16-bit local variables (alloca i16).
 // Selected manually in ISelDAGToDAG for i16 loads/stores to frame indices.
-let mayLoad = 1, hasSideEffects = 0 in
-def LOAD_FI16 : Pseudo<(outs GR16:$dst), (ins i16imm:$fi),
+let mayLoad = 1, hasSideEffects = 0, Defs = [HL, F] in
+def LOAD_FI16 : Pseudo<(outs GR16NoHL:$dst), (ins i16imm:$fi),
                         "# LOAD_FI16 $dst, [$fi]", []>;
 
-let mayStore = 1, hasSideEffects = 0 in
-def STORE_FI16 : Pseudo<(outs), (ins GR16:$src, i16imm:$fi),
+let mayStore = 1, hasSideEffects = 0, Defs = [HL, F] in
+def STORE_FI16 : Pseudo<(outs), (ins GR16NoHL:$src, i16imm:$fi),
                         "# STORE_FI16 [$fi], $src", []>;
 
 // Pointer-based load/store — for `load i8, ptr %p` where %p is a GR16 reg.
 // Expands to: copy ptr to HL (if needed), then LD r,(HL) / LD (HL),r.
-let mayLoad = 1, hasSideEffects = 0 in
+let mayLoad = 1, hasSideEffects = 0, Defs = [HL] in
 def LOAD_PTR8 : Pseudo<(outs GPR8:$dst), (ins GR16:$ptr),
                         "# LOAD_PTR8 $dst, [$ptr]",
                         [(set i8:$dst, (load GR16:$ptr))]>;
 
-let mayStore = 1, hasSideEffects = 0 in
+let mayStore = 1, hasSideEffects = 0, Defs = [HL] in
 def STORE_PTR8 : Pseudo<(outs), (ins GPR8:$src, GR16:$ptr),
                         "# STORE_PTR8 [$ptr], $src",
                         [(store i8:$src, GR16:$ptr)]>;
 
 // SEXT8_16 — sign-extend i8 to i16.
 // Expands to: LD dst.lo, src; LD A, src; ADD A, A; SBC A, A; LD dst.hi, A.
+let Defs = [A, F] in
 def SEXT8_16 : Pseudo<(outs GR16:$dst), (ins GPR8:$src),
                       "# SEXT8_16 $dst, $src", []>;
 
 // Stack spill pseudos — expanded to LDHLSP + LD r,(HL) / LD (HL),r.
 // Used by register allocator for spills, not matched by patterns.
-let mayLoad = 1, hasSideEffects = 0, mayStore = 0 in
+let mayLoad = 1, hasSideEffects = 0, mayStore = 0, Defs = [HL, F] in
 def LOAD_STACK8 : Pseudo<(outs GPR8:$dst), (ins i16imm:$offset),
                          "# LOAD_STACK8 $dst, SP+$offset", []>;
 
-let mayStore = 1, hasSideEffects = 0, mayLoad = 0 in
+let mayStore = 1, hasSideEffects = 0, mayLoad = 0, Defs = [HL, F] in
 def STORE_STACK8 : Pseudo<(outs), (ins GPR8:$src, i16imm:$offset),
                           "# STORE_STACK8 SP+$offset, $src", []>;
 
@@ -176,14 +177,14 @@ def CMPC8rr : Pseudo<(outs), (ins GPR8:$lhs, GPR8:$rhs),
 
 // CMP16rr — 16-bit unsigned ordered compare.
 // Expands to: LD A,lhs.lo; CP rhs.lo; LD A,lhs.hi; SBC A,rhs.hi → C=(lhs<rhs).
-let Defs = [A, F], hasSideEffects = 1 in
+let Defs = [A, F], hasSideEffects = 0 in
 def CMP16rr : Pseudo<(outs), (ins GR16:$lhs, GR16:$rhs),
                      "# CMP16 $lhs, $rhs",
                      [(SM83cmp16 i16:$lhs, i16:$rhs)]>;
 
 // CMP16EQrr — 16-bit equality compare. L is used as a scratch register.
 // Expands to: LD A,lhs.lo; XOR rhs.lo; LD L,A; LD A,lhs.hi; XOR rhs.hi; OR L → Z=(lhs==rhs).
-let Defs = [A, F, L], hasSideEffects = 1 in
+let Defs = [A, F, L], hasSideEffects = 0 in
 def CMP16EQrr : Pseudo<(outs), (ins GR16:$lhs, GR16:$rhs),
                         "# CMP16EQ $lhs, $rhs",
                         [(SM83cmp16eq i16:$lhs, i16:$rhs)]>;

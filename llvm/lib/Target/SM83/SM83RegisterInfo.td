@@ -73,6 +73,10 @@ def Acc : RegisterClass<"SM83", [i8], 8, (add A)>;
 // GR16: general 16-bit register pairs (BC, DE, HL).
 def GR16 : RegisterClass<"SM83", [i16], 8, (add BC, DE, HL)>;
 
+// GR16NoHL: 16-bit pairs excluding HL — used for pseudos that clobber HL
+// during expansion (e.g., LOAD_FI16, STORE_FI16).
+def GR16NoHL : RegisterClass<"SM83", [i16], 8, (add BC, DE)>;
+
 // GPR16: all pushable/poppable 16-bit pairs.
 def GPR16 : RegisterClass<"SM83", [i16], 8, (add BC, DE, HL, AF)>;
 

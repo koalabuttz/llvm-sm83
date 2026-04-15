@@ -35,8 +35,9 @@ protected:
     // We use generic ELF types since SM83 has no official reloc numbers.
     switch ((unsigned)Fixup.getKind()) {
     case FK_Data_1:
+      return ELF::R_386_8;   // 8-bit absolute
     case SM83::fixup_pcrel_8:
-      return ELF::R_386_PC8; // 8-bit PC-relative (generic, best match)
+      return ELF::R_386_PC8; // 8-bit PC-relative
     case FK_Data_2:
     case SM83::fixup_16:
       return ELF::R_386_16; // 16-bit absolute (generic, best match)

@@ -340,9 +340,6 @@ DecodeStatus SM83Disassembler::getInstruction(MCInst &Instr, uint64_t &Size,
   }
 
   // JR cc, e (0x20/0x28/0x30/0x38)
-  if ((B0 & 0xE7) == 0x20 && (B0 & 0x18) != 0) {
-    // Actually: 0x20, 0x28, 0x30, 0x38
-  }
   if (B0 == 0x20 || B0 == 0x28 || B0 == 0x30 || B0 == 0x38) {
     if (Bytes.size() < 2) { Size = 1; return Fail; }
     Size = 2;
@@ -410,9 +407,6 @@ DecodeStatus SM83Disassembler::getInstruction(MCInst &Instr, uint64_t &Size,
 
   // --- 11 block ---
   // RET cc (0xC0/0xC8/0xD0/0xD8)
-  if ((B0 & 0xE7) == 0xC0 && (B0 & 0x18) != 0x10) {
-    // Actually 0xC0, 0xC8, 0xD0, 0xD8
-  }
   if (B0 == 0xC0 || B0 == 0xC8 || B0 == 0xD0 || B0 == 0xD8) {
     Size = 1;
     Instr.setOpcode(SM83::RETcc);
