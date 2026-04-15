@@ -78,10 +78,10 @@ bool SM83RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   // If offset fits in signed 8-bit, use LDHLSP directly.
   // Otherwise, we need a longer sequence.
 
-  // Replace the frame index with SP and the computed offset.
-  MI.getOperand(FIOperandNum).ChangeToRegister(SM83::SP, false);
-  if (MI.getNumOperands() > FIOperandNum + 1)
-    MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Offset);
+  // Replace the frame index with the computed SP-relative offset.
+  // The pseudo expansion (LOAD_STACK8, STORE_STACK8, LOAD_FI16, etc.)
+  // passes this operand directly to LDHLSP which expects an immediate.
+  MI.getOperand(FIOperandNum).ChangeToImmediate(Offset);
 
   return false;
 }

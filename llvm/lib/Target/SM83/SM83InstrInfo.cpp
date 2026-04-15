@@ -164,4 +164,153 @@ void SM83InstrInfo::loadRegFromStackSlot(
   }
 }
 
+// ==========================================================================
+// Branch analysis for the Control Flow Optimizer.
+// ==========================================================================
+
+/// Return true if the instruction is an unconditional branch (JP).
+static bool isUncondBranch(const MachineInstr &MI) {
+  return MI.getOpcode() == SM83::JP || MI.getOpcode() == SM83::JR;
+}
+
+/// Return true if the instruction is a conditional branch (JPcc/JRcc).
+static bool isCondBranch(const MachineInstr &MI) {
+  return MI.getOpcode() == SM83::JPcc || MI.getOpcode() == SM83::JRcc;
+}
+
+/// Get the condition code operand index for a conditional branch.
+/// For JPcc/JRcc: operand 0 = cc, operand 1 = target.
+static unsigned getCondFromBranch(const MachineInstr &MI) {
+  assert(isCondBranch(MI));
+  return MI.getOperand(0).getImm();
+}
+
+/// Get the branch target operand.
+static MachineBasicBlock *getBranchTarget(const MachineInstr &MI) {
+  if (isCondBranch(MI))
+    return MI.getOperand(1).getMBB();
+  return MI.getOperand(0).getMBB();
+}
+
+/// SM83 condition codes: 0=NZ, 1=Z, 2=NC, 3=C.
+/// Opposite pairs: NZ<->Z, NC<->C.
+static unsigned getOppositeCond(unsigned CC) {
+  switch (CC) {
+  case 0: return 1; // NZ -> Z
+  case 1: return 0; // Z -> NZ
+  case 2: return 3; // NC -> C
+  case 3: return 2; // C -> NC
+  default: llvm_unreachable("Invalid SM83 condition code");
+  }
+}
+
+bool SM83InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
+                                  MachineBasicBlock *&TBB,
+                                  MachineBasicBlock *&FBB,
+                                  SmallVectorImpl<MachineOperand> &Cond,
+                                  bool AllowModify) const {
+  TBB = FBB = nullptr;
+
+  MachineBasicBlock::iterator I = MBB.end();
+  while (I != MBB.begin()) {
+    --I;
+    if (I->isDebugInstr())
+      continue;
+    if (!isUnpredicatedTerminator(*I))
+      break;
+
+    if (isUncondBranch(*I)) {
+      if (TBB) {
+        // Two unconditional branches — shouldn't happen normally.
+        return true;
+      }
+      TBB = getBranchTarget(*I);
+      if (AllowModify && MBB.isLayoutSuccessor(TBB)) {
+        // Remove branches to the fallthrough block.
+        I->eraseFromParent();
+        I = MBB.end();
+        TBB = nullptr;
+        continue;
+      }
+    } else if (isCondBranch(*I)) {
+      if (TBB) {
+        // We already have an unconditional branch — this conditional is first.
+        FBB = TBB;
+        TBB = getBranchTarget(*I);
+        Cond.push_back(MachineOperand::CreateImm(getCondFromBranch(*I)));
+        return false;
+      }
+      TBB = getBranchTarget(*I);
+      Cond.push_back(MachineOperand::CreateImm(getCondFromBranch(*I)));
+    } else {
+      // Unknown terminator — can't analyze.
+      return true;
+    }
+  }
+  return false;
+}
+
+unsigned SM83InstrInfo::insertBranch(MachineBasicBlock &MBB,
+                                    MachineBasicBlock *TBB,
+                                    MachineBasicBlock *FBB,
+                                    ArrayRef<MachineOperand> Cond,
+                                    const DebugLoc &DL,
+                                    int *BytesAdded) const {
+  assert(TBB && "insertBranch must not be told to insert a fallthrough");
+  unsigned Count = 0;
+
+  if (Cond.empty()) {
+    // Unconditional branch.
+    assert(!FBB && "Unconditional branch with two targets?");
+    BuildMI(&MBB, DL, get(SM83::JP)).addMBB(TBB);
+    if (BytesAdded) *BytesAdded = 3;
+    return 1;
+  }
+
+  // Conditional branch.
+  unsigned CC = Cond[0].getImm();
+  BuildMI(&MBB, DL, get(SM83::JPcc)).addImm(CC).addMBB(TBB);
+  Count++;
+  if (BytesAdded) *BytesAdded = 3;
+
+  if (FBB) {
+    // Two-way branch: conditional + fallthrough unconditional.
+    BuildMI(&MBB, DL, get(SM83::JP)).addMBB(FBB);
+    Count++;
+    if (BytesAdded) *BytesAdded += 3;
+  }
+  return Count;
+}
+
+unsigned SM83InstrInfo::removeBranch(MachineBasicBlock &MBB,
+                                    int *BytesRemoved) const {
+  unsigned Count = 0;
+  if (BytesRemoved) *BytesRemoved = 0;
+
+  MachineBasicBlock::iterator I = MBB.end();
+  while (I != MBB.begin()) {
+    --I;
+    if (I->isDebugInstr())
+      continue;
+    if (!isUncondBranch(*I) && !isCondBranch(*I))
+      break;
+
+    unsigned Size = (I->getOpcode() == SM83::JR || I->getOpcode() == SM83::JRcc)
+                        ? 2 : 3;
+    I->eraseFromParent();
+    I = MBB.end();
+    Count++;
+    if (BytesRemoved) *BytesRemoved += Size;
+  }
+  return Count;
+}
+
+bool SM83InstrInfo::reverseBranchCondition(
+    SmallVectorImpl<MachineOperand> &Cond) const {
+  assert(Cond.size() == 1 && "Invalid SM83 branch condition");
+  unsigned CC = Cond[0].getImm();
+  Cond[0].setImm(getOppositeCond(CC));
+  return false;
+}
+
 } // end namespace llvm
