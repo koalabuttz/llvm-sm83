@@ -2,8 +2,9 @@
 ; Compiler-rt routines for the Sharp SM83 (Game Boy / Color) CPU.
 ;
 ; Calling convention:
-;   i8  args/ret: A, then B, C, D, E, H, L
-;   i16 args/ret: BC (first pair), DE (second), HL (return)
+;   i8  args: A, C, B, E, D (in that order)     ret: A
+;   i16 args: BC, DE (in that order)             ret: HL
+;   HL is reserved: i16 return register + indirect-call target.
 ;   All registers are caller-save.
 ;
 ; Assembled with: llvm-mc -triple sm83 -filetype=obj sm83-runtime.s
@@ -238,6 +239,19 @@ __modqi3:
 	cpl
 	inc a
 	ret
+
+; ==========================================================================
+; __sm83_icall_hl — indirect call trampoline
+; SM83 has no indirect CALL instruction.  The compiler lowers a call through
+; a function pointer by copying the callee address into HL, then emitting
+;   call __sm83_icall_hl
+; This function jumps to HL, transferring control to the real callee.
+; The callee returns directly to the original call site (via the return
+; address already on the stack from the CALL instruction).
+; ==========================================================================
+	.global __sm83_icall_hl
+__sm83_icall_hl:
+	jp hl
 
 ; ==========================================================================
 ; memcpy — copy n bytes from src to dst
