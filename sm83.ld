@@ -61,6 +61,7 @@ SECTIONS {
      */
     .text 0x0150 : {
         KEEP(*(.text._start))
+        KEEP(*(.text.icall_hl))   /* jp hl trampoline — __sm83_icall_hl */
         *(.text*)
         *(.rodata*)
         *(.rodata)

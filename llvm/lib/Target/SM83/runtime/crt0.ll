@@ -67,3 +67,18 @@ halt:
   ; main() returned — halt forever (shouldn't happen on a well-written GB game).
   br label %halt
 }
+
+; __sm83_icall_hl — indirect call trampoline.
+;
+; SM83 has no indirect CALL instruction.  The compiler lowers a call through
+; a function pointer by copying the callee address into HL, then emitting:
+;   call __sm83_icall_hl
+; The CALL pushes the return address.  This trampoline then executes jp hl
+; (opcode 0xE9), jumping to the real callee.  The callee's RET instruction
+; pops the return address pushed by the original CALL, returning control to
+; the call site.
+;
+; Since no SM83 asm parser exists, we provide the single byte 0xE9 as a
+; raw constant in a dedicated text section.  The linker script KEEPs it.
+@__sm83_icall_hl = global [1 x i8] c"\E9",
+    section ".text.icall_hl", align 1

@@ -857,7 +857,7 @@ static bool CC_SM83(unsigned ValNo, MVT ValVT, MVT LocVT,
     }
   }
   // Stack.
-  unsigned Offset = State.AllocateStack(LocVT == MVT::i16 ? 2 : 1, Align(1));
+  unsigned Offset = State.AllocateStack(LocVT == MVT::i16 ? 2 : 1, Align(2));
   State.addLoc(CCValAssign::getMem(ValNo, ValVT, Offset, LocVT, LocInfo));
   return false;
 }
@@ -883,13 +883,20 @@ SDValue SM83TargetLowering::LowerFormalArguments(
       SDValue ArgVal = DAG.getCopyFromReg(Chain, dl, VReg, VT);
       InVals.push_back(ArgVal);
     } else {
-      // Stack argument — load from stack slot.
+      // Stack argument.
       MachineFrameInfo &MFI = MF.getFrameInfo();
-      unsigned Size = VA.getLocVT() == MVT::i16 ? 2 : 1;
+      ISD::ArgFlagsTy Flags = Ins[VA.getValNo()].Flags;
+      unsigned Size = Flags.isByVal() ? Flags.getByValSize()
+                                      : (VA.getLocVT() == MVT::i16 ? 2 : 1);
       int FI = MFI.CreateFixedObject(Size, VA.getLocMemOffset(), true);
       SDValue FIN = DAG.getFrameIndex(FI, MVT::i16);
-      InVals.push_back(
-          DAG.getLoad(VA.getLocVT(), dl, Chain, FIN, MachinePointerInfo()));
+      if (Flags.isByVal()) {
+        // byval: the callee receives a pointer to its stack copy directly.
+        InVals.push_back(FIN);
+      } else {
+        InVals.push_back(
+            DAG.getLoad(VA.getLocVT(), dl, Chain, FIN, MachinePointerInfo()));
+      }
     }
   }
 
@@ -956,12 +963,24 @@ SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     if (VA.isRegLoc()) {
       RegsToPass.push_back(std::make_pair(VA.getLocReg(), Arg));
     } else {
-      // Stack argument.
+      // Stack argument — compute destination pointer at SP + slot offset.
       SDValue StackPtr = DAG.getCopyFromReg(Chain, DL, SM83::SP, MVT::i16);
       SDValue PtrOff = DAG.getNode(ISD::ADD, DL, MVT::i16, StackPtr,
                                    DAG.getConstant(VA.getLocMemOffset(), DL, MVT::i16));
-      MemOpChains.push_back(
-          DAG.getStore(Chain, DL, Arg, PtrOff, MachinePointerInfo()));
+      ISD::ArgFlagsTy Flags = Outs[i].Flags;
+      if (Flags.isByVal()) {
+        // byval: copy the struct to the stack slot; callee receives the pointer.
+        SDValue SizeNode = DAG.getConstant(Flags.getByValSize(), DL, MVT::i16);
+        MemOpChains.push_back(
+            DAG.getMemcpy(Chain, DL, PtrOff, Arg, SizeNode,
+                          Flags.getNonZeroByValAlign(),
+                          /*isVolatile=*/false, /*AlwaysInline=*/true,
+                          /*CI=*/nullptr, std::nullopt,
+                          MachinePointerInfo(), MachinePointerInfo()));
+      } else {
+        MemOpChains.push_back(
+            DAG.getStore(Chain, DL, Arg, PtrOff, MachinePointerInfo()));
+      }
     }
   }
 
