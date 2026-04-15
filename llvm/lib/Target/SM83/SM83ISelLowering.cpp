@@ -54,8 +54,10 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   // Expand operations SM83 can't do natively.
   setOperationAction(ISD::STACKSAVE, MVT::Other, Expand);
   setOperationAction(ISD::STACKRESTORE, MVT::Other, Expand);
-  setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i8, Expand);
-  setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i16, Expand);
+  // SM83 has no hardware support for variable-length stack allocation (VLAs).
+  // Mark as Custom so we can emit a fatal error rather than silently miscompile.
+  setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i8, Custom);
+  setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i16, Custom);
 
   setOperationAction(ISD::MUL, MVT::i8, Custom);
   setOperationAction(ISD::MUL, MVT::i16, Expand);
@@ -102,6 +104,9 @@ SDValue SM83TargetLowering::LowerOperation(SDValue Op,
     return LowerSETCC(Op, DAG);
   case ISD::MUL:
     return LowerMUL(Op, DAG);
+  case ISD::DYNAMIC_STACKALLOC:
+    report_fatal_error("SM83 does not support variable-length arrays (VLAs) "
+                       "or dynamic stack allocation");
   default:
     report_fatal_error("SM83: unimplemented operand");
   }

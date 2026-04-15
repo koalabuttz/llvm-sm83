@@ -1,0 +1,20 @@
+{
+  "arch": "sm83",
+  "data-layout": "e-p:16:8-i8:8-i16:8-n8-S8",
+  "llvm-target": "sm83-unknown-none",
+  "target-endian": "little",
+  "target-pointer-width": "16",
+  "target-c-int-width": "16",
+  "os": "none",
+  "env": "",
+  "vendor": "unknown",
+  "linker-flavor": "ld.lld",
+  "panic-strategy": "abort",
+  "disable-redzone": true,
+  "features": "",
+  "executables": true,
+  "no-default-libraries": true,
+  "relocation-model": "static",
+  "code-model": "small",
+  "emit-debug-gdb-scripts": false
+}

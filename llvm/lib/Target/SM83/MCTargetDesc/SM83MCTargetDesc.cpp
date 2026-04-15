@@ -7,8 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "SM83MCTargetDesc.h"
+#include "SM83AsmBackend.h"
 #include "SM83InstPrinter.h"
 #include "SM83MCAsmInfo.h"
+#include "SM83MCCodeEmitter.h"
 #include "TargetInfo/SM83TargetInfo.h"
 
 #include "llvm/MC/MCInstrInfo.h"
@@ -57,6 +59,18 @@ static MCInstPrinter *createSM83MCInstPrinter(const Triple &T,
   return nullptr;
 }
 
+static MCCodeEmitter *createSM83MCCodeEmitter(const MCInstrInfo &MCII,
+                                              MCContext &Ctx) {
+  return new SM83MCCodeEmitter(MCII, Ctx);
+}
+
+static MCAsmBackend *createSM83AsmBackendWrapper(const Target &T,
+                                                  const MCSubtargetInfo &STI,
+                                                  const MCRegisterInfo &MRI,
+                                                  const MCTargetOptions &Options) {
+  return createSM83AsmBackend(T, STI, MRI, Options);
+}
+
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void
 LLVMInitializeSM83TargetMC() {
   // Register the MC asm info.
@@ -77,4 +91,12 @@ LLVMInitializeSM83TargetMC() {
   // Register the MCInstPrinter.
   TargetRegistry::RegisterMCInstPrinter(getTheSM83Target(),
                                         createSM83MCInstPrinter);
+
+  // Register the MC code emitter.
+  TargetRegistry::RegisterMCCodeEmitter(getTheSM83Target(),
+                                        createSM83MCCodeEmitter);
+
+  // Register the asm backend.
+  TargetRegistry::RegisterMCAsmBackend(getTheSM83Target(),
+                                       createSM83AsmBackendWrapper);
 }

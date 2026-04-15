@@ -46,5 +46,6 @@ add_llvm_target(SM83CodeGen
   SM83
   )
 
+add_subdirectory(Disassembler)
 add_subdirectory(MCTargetDesc)
 add_subdirectory(TargetInfo)

@@ -219,6 +219,8 @@ uint16_t ELF::convertTripleArchTypeToEMachine(Triple::ArchType ArchType) {
     return EM_ARC;
   case Triple::avr:
     return EM_AVR;
+  case Triple::sm83:
+    return EM_SM83;
   case Triple::bpfel:
   case Triple::bpfeb:
     return EM_BPF;
@@ -628,6 +630,8 @@ StringRef ELF::convertEMachineToArchName(uint16_t EMachine) {
     return "csky";
   case EM_LOONGARCH:
     return "loongarch";
+  case EM_SM83:
+    return "sm83";
   default:
     return "None";
   }
