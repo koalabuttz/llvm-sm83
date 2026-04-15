@@ -65,6 +65,9 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
 
   // Raw BRCOND must be expanded to BR_CC (which we handle via Custom lowering).
   setOperationAction(ISD::BRCOND, MVT::Other, Expand);
+  // Jump tables: expand to if-else chains (SM83 has no indexed jump).
+  setOperationAction(ISD::BR_JT, MVT::Other, Expand);
+  setMinimumJumpTableEntries(INT_MAX); // Disable jump table generation entirely.
 
   // i32 comparison/branching — Custom so we can decompose into chained i16 compares.
   setOperationAction(ISD::BR_CC, MVT::i32, Custom);
