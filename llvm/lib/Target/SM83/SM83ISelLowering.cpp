@@ -531,6 +531,67 @@ MachineBasicBlock *SM83TargetLowering::insertShift(MachineInstr &MI,
   Register SrcReg = MI.getOperand(1).getReg();
   Register AmtReg = MI.getOperand(2).getReg();
 
+  // --- Constant-shift fast path: detect LDri def and unroll ---
+  // If the shift amount is a compile-time constant (materialized by LDri),
+  // emit N individual shift-by-1 instructions instead of a loop.
+  MachineInstr *AmtDef = MRI.getVRegDef(AmtReg);
+  if (AmtDef && AmtDef->getOpcode() == SM83::LDri) {
+    uint8_t N = static_cast<uint8_t>(AmtDef->getOperand(1).getImm()) & 0x7;
+
+    if (Is16) {
+      // Extract lo/hi from GR16 source.
+      Register CurLo = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+      Register CurHi = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+      BuildMI(*MBB, MI, DL, TII.get(TargetOpcode::COPY), CurLo)
+          .addReg(SrcReg, RegState::NoFlags, SM83::sub_lo);
+      BuildMI(*MBB, MI, DL, TII.get(TargetOpcode::COPY), CurHi)
+          .addReg(SrcReg, RegState::NoFlags, SM83::sub_hi);
+
+      for (uint8_t i = 0; i < N; ++i) {
+        Register NextLo = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+        Register NextHi = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+        if (Opc == SM83::SHL16rr) {
+          BuildMI(*MBB, MI, DL, TII.get(SM83::SLAr), NextLo).addReg(CurLo);
+          BuildMI(*MBB, MI, DL, TII.get(SM83::RLr),  NextHi).addReg(CurHi);
+        } else if (Opc == SM83::SRL16rr) {
+          BuildMI(*MBB, MI, DL, TII.get(SM83::SRLr), NextHi).addReg(CurHi);
+          BuildMI(*MBB, MI, DL, TII.get(SM83::RRr),  NextLo).addReg(CurLo);
+        } else { // SRA16rr
+          BuildMI(*MBB, MI, DL, TII.get(SM83::SRAr), NextHi).addReg(CurHi);
+          BuildMI(*MBB, MI, DL, TII.get(SM83::RRr),  NextLo).addReg(CurLo);
+        }
+        CurLo = NextLo;
+        CurHi = NextHi;
+      }
+
+      // Recombine lo/hi into the GR16 destination.
+      BuildMI(*MBB, MI, DL, TII.get(TargetOpcode::REG_SEQUENCE), DstReg)
+          .addReg(CurLo).addImm(SM83::sub_lo)
+          .addReg(CurHi).addImm(SM83::sub_hi);
+    } else {
+      // 8-bit: determine hardware shift opcode.
+      unsigned ShiftOpc;
+      if (Opc == SM83::SHL8r)      ShiftOpc = SM83::SLAr;
+      else if (Opc == SM83::SRL8r) ShiftOpc = SM83::SRLr;
+      else                          ShiftOpc = SM83::SRAr;
+
+      Register CurReg = SrcReg;
+      for (uint8_t i = 0; i < N; ++i) {
+        Register NextReg = (i == N - 1)
+                               ? DstReg
+                               : MRI.createVirtualRegister(&SM83::GPR8RegClass);
+        BuildMI(*MBB, MI, DL, TII.get(ShiftOpc), NextReg).addReg(CurReg);
+        CurReg = NextReg;
+      }
+      if (N == 0)
+        BuildMI(*MBB, MI, DL, TII.get(SM83::LDrr), DstReg).addReg(SrcReg);
+    }
+
+    MI.eraseFromParent();
+    return MBB;
+  }
+  // --- End constant-shift fast path ---
+
   // Create loop and done MBBs.
   MachineBasicBlock *LoopMBB = MF->CreateMachineBasicBlock(MBB->getBasicBlock());
   MachineBasicBlock *DoneMBB = MF->CreateMachineBasicBlock(MBB->getBasicBlock());
