@@ -113,6 +113,9 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
   setOperationAction(ISD::CTPOP, MVT::i8, Expand);
   setOperationAction(ISD::CTLZ, MVT::i8, Expand);
   setOperationAction(ISD::CTTZ, MVT::i8, Expand);
+  setOperationAction(ISD::CTPOP, MVT::i16, Expand);
+  setOperationAction(ISD::CTLZ, MVT::i16, Expand);
+  setOperationAction(ISD::CTTZ, MVT::i16, Expand);
   setOperationAction(ISD::BSWAP, MVT::i16, Expand);
 
   setOperationAction(ISD::SHL_PARTS, MVT::i8, Expand);

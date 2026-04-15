@@ -66,14 +66,26 @@ void SM83InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     }
   }
 
-  // SP → HL: LD HL, SP+0 (read stack pointer into HL).
-  if (DestReg == SM83::HL && SrcReg == SM83::SP) {
+  // SP → GR16: first load SP into HL via LDHLSP, then copy HL to dest.
+  if (SrcReg == SM83::SP && SM83::GR16RegClass.contains(DestReg)) {
     BuildMI(MBB, MI, DL, get(SM83::LDHLSP)).addImm(0);
+    if (DestReg != SM83::HL) {
+      Register DestLo = RI.getSubReg(DestReg, SM83::sub_lo);
+      Register DestHi = RI.getSubReg(DestReg, SM83::sub_hi);
+      BuildMI(MBB, MI, DL, get(SM83::LDrr), DestLo).addReg(SM83::L);
+      BuildMI(MBB, MI, DL, get(SM83::LDrr), DestHi).addReg(SM83::H);
+    }
     return;
   }
 
-  // HL → SP: LD SP, HL.
-  if (DestReg == SM83::SP && SrcReg == SM83::HL) {
+  // GR16 → SP: copy to HL first if needed, then LD SP, HL.
+  if (DestReg == SM83::SP && SM83::GR16RegClass.contains(SrcReg)) {
+    if (SrcReg != SM83::HL) {
+      Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
+      Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
+      BuildMI(MBB, MI, DL, get(SM83::LDrr), SM83::L).addReg(SrcLo);
+      BuildMI(MBB, MI, DL, get(SM83::LDrr), SM83::H).addReg(SrcHi);
+    }
     BuildMI(MBB, MI, DL, get(SM83::LDSPHL));
     return;
   }
