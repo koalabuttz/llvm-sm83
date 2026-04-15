@@ -57,6 +57,10 @@ public:
 
   // -------------------------------------------------------------------------
   // applyFixup — patch the encoded bytes with the resolved fixup value.
+  //
+  // NOTE: `Data` is already positioned at the fixup location by the caller
+  // (i.e., Data = fragment_contents + fixup_offset).  Write to Data[0],
+  // Data[1], etc. — do NOT add Fixup.getOffset() again.
   // -------------------------------------------------------------------------
   void applyFixup(const MCFragment &F, const MCFixup &Fixup,
                   const MCValue &Target, uint8_t *Data, uint64_t Value,
@@ -64,14 +68,13 @@ public:
     maybeAddReloc(F, Fixup, Target, Value, IsResolved);
 
     unsigned Kind = Fixup.getKind();
-    unsigned Offset = Fixup.getOffset();
 
     switch (Kind) {
     case SM83::fixup_16:
     case FK_Data_2:
       // 16-bit little-endian absolute address.
-      Data[Offset + 0] = Value & 0xFF;
-      Data[Offset + 1] = (Value >> 8) & 0xFF;
+      Data[0] = Value & 0xFF;
+      Data[1] = (Value >> 8) & 0xFF;
       return;
 
     case SM83::fixup_pcrel_8: {
@@ -84,19 +87,19 @@ public:
       if (Adjusted < -128 || Adjusted > 127)
         getContext().reportError(Fixup.getLoc(),
                                  "SM83 JR offset out of range [-128, 127]");
-      Data[Offset] = static_cast<uint8_t>(Adjusted & 0xFF);
+      Data[0] = static_cast<uint8_t>(Adjusted & 0xFF);
       return;
     }
 
     case FK_Data_1:
-      Data[Offset] = Value & 0xFF;
+      Data[0] = Value & 0xFF;
       return;
 
     case FK_Data_4:
-      Data[Offset + 0] = Value & 0xFF;
-      Data[Offset + 1] = (Value >> 8) & 0xFF;
-      Data[Offset + 2] = (Value >> 16) & 0xFF;
-      Data[Offset + 3] = (Value >> 24) & 0xFF;
+      Data[0] = Value & 0xFF;
+      Data[1] = (Value >> 8) & 0xFF;
+      Data[2] = (Value >> 16) & 0xFF;
+      Data[3] = (Value >> 24) & 0xFF;
       return;
 
     default:
@@ -118,30 +121,22 @@ public:
   // Instruction relaxation: JR (±127 B, 2 bytes) → JP (16-bit, 3 bytes)
   // -------------------------------------------------------------------------
 
-  // Return true if the opcode might need relaxation (preliminary check before
-  // computing actual fixup values).
   bool mayNeedRelaxation(unsigned Opcode, ArrayRef<MCOperand> Operands,
                          const MCSubtargetInfo &STI) const override {
     return Opcode == SM83::JR || Opcode == SM83::JRcc;
   }
 
-  // Returns true if the fixup's PC-relative value is out of the signed 8-bit
-  // range that JR requires (after the -1 adjustment for instruction length).
   bool fixupNeedsRelaxationAdvanced(const MCFragment &, const MCFixup &Fixup,
                                     const MCValue &, uint64_t UnsignedValue,
                                     bool Resolved) const override {
     if ((unsigned)Fixup.getKind() != SM83::fixup_pcrel_8)
       return false;
-    // If the symbol is not yet resolved, conservatively relax.
     if (!Resolved)
       return true;
-    // Compute the adjusted offset (same as applyFixup: offset = value - 1).
     int64_t Value = static_cast<int64_t>(UnsignedValue) - 1;
     return !isInt<8>(Value);
   }
 
-  // Replace a JR/JRcc MCInst with the equivalent JP/JPcc.
-  // The operands are identical; only the opcode changes.
   void relaxInstruction(MCInst &Inst,
                         const MCSubtargetInfo &STI) const override {
     switch (Inst.getOpcode()) {
