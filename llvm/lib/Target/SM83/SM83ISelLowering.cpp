@@ -536,7 +536,13 @@ MachineBasicBlock *SM83TargetLowering::insertShift(MachineInstr &MI,
   // emit N individual shift-by-1 instructions instead of a loop.
   MachineInstr *AmtDef = MRI.getVRegDef(AmtReg);
   if (AmtDef && AmtDef->getOpcode() == SM83::LDri) {
-    uint8_t N = static_cast<uint8_t>(AmtDef->getOperand(1).getImm()) & 0x7;
+    unsigned RawImm = static_cast<unsigned>(AmtDef->getOperand(1).getImm());
+    // For i8, shifts >= 8 are LLVM IR poison so masking to 7 is fine.
+    // For i16, valid shift counts are 0–15; mask to 4 bits.
+    uint8_t N = Is16 ? (RawImm & 0xF) : (RawImm & 0x7);
+    // For i16 shifts >= 8 the loop handles the byte-boundary case correctly;
+    // skip unrolling and fall through to the loop path below.
+    if (Is16 && N > 7) goto use_loop;
 
     if (Is16) {
       // Extract lo/hi from GR16 source.
@@ -592,6 +598,7 @@ MachineBasicBlock *SM83TargetLowering::insertShift(MachineInstr &MI,
   }
   // --- End constant-shift fast path ---
 
+use_loop:
   // Create loop and done MBBs.
   MachineBasicBlock *LoopMBB = MF->CreateMachineBasicBlock(MBB->getBasicBlock());
   MachineBasicBlock *DoneMBB = MF->CreateMachineBasicBlock(MBB->getBasicBlock());

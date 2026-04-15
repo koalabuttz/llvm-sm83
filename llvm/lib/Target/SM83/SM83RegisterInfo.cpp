@@ -9,10 +9,12 @@
 #include "SM83RegisterInfo.h"
 
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/TargetFrameLowering.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include "SM83.h"
 #include "SM83InstrInfo.h"
@@ -77,6 +79,14 @@ bool SM83RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   // This is done by the LDHLSP instruction which does LD HL, SP+imm8s.
   // If offset fits in signed 8-bit, use LDHLSP directly.
   // Otherwise, we need a longer sequence.
+
+  // LDHLSP encodes a signed 8-bit offset (range -128..127).  Frames larger
+  // than ~127 bytes of locals require a multi-instruction sequence that is
+  // not yet implemented.  Fail loudly rather than silently truncating.
+  if (Offset < -128 || Offset > 127)
+    report_fatal_error("SM83: frame index offset " + Twine(Offset) +
+                       " out of range [-128,127]; function stack frame is"
+                       " too large (~127 byte limit on locals)");
 
   // Replace the frame index with the computed SP-relative offset.
   // The pseudo expansion (LOAD_STACK8, STORE_STACK8, LOAD_FI16, etc.)

@@ -143,3 +143,17 @@ define i16 @sra_i16_const3(i16 %a) {
   %result = ashr i16 %a, 3
   ret i16 %result
 }
+
+; Shift count exactly 8 on i16 — must NOT be treated as shift-by-0.
+; The constant unrolling fast path must fall through to the loop for N >= 8.
+
+define i16 @shl_i16_const8(i16 %a) {
+; CHECK-LABEL: shl_i16_const8:
+; CHECK:       or a
+; CHECK:       sla
+; CHECK:       rl
+; CHECK:       dec
+; CHECK:       ret
+  %result = shl i16 %a, 8
+  ret i16 %result
+}
