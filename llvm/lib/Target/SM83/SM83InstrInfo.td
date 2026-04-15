@@ -151,6 +151,17 @@ def STORE_PTR8 : Pseudo<(outs), (ins GPR8:$src, GR16:$ptr),
                         "# STORE_PTR8 [$ptr], $src",
                         [(store i8:$src, GR16:$ptr)]>;
 
+// 16-bit pointer load/store — for `load/store i16, ptr %p`.
+let mayLoad = 1, hasSideEffects = 0, Defs = [HL, A] in
+def LOAD_PTR16 : Pseudo<(outs GR16NoHL:$dst), (ins GR16:$ptr),
+                         "# LOAD_PTR16 $dst, [$ptr]",
+                         [(set i16:$dst, (load GR16:$ptr))]>;
+
+let mayStore = 1, hasSideEffects = 0, Defs = [HL, A] in
+def STORE_PTR16 : Pseudo<(outs), (ins GR16:$src, GR16:$ptr),
+                          "# STORE_PTR16 [$ptr], $src",
+                          [(store i16:$src, GR16:$ptr)]>;
+
 // SEXT8_16 — sign-extend i8 to i16.
 // Expands to: LD dst.lo, src; LD A, src; ADD A, A; SBC A, A; LD dst.hi, A.
 let Defs = [A, F] in

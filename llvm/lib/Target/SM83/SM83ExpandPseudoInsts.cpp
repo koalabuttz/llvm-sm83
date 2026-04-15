@@ -69,6 +69,8 @@ private:
   bool expandCMPC8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLOAD_PTR8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandSTORE_PTR8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandLOAD_PTR16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandSTORE_PTR16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLOAD_FI16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandSTORE_FI16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandCMP16rr(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
@@ -135,6 +137,8 @@ bool SM83ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case SM83::STORE_FI16: return expandSTORE_FI16(MBB, MI);
   case SM83::LOAD_PTR8: return expandLOAD_PTR8(MBB, MI);
   case SM83::STORE_PTR8: return expandSTORE_PTR8(MBB, MI);
+  case SM83::LOAD_PTR16: return expandLOAD_PTR16(MBB, MI);
+  case SM83::STORE_PTR16: return expandSTORE_PTR16(MBB, MI);
   case SM83::SEXT8_16: return expandSEXT8_16(MBB, MI);
   case SM83::CMPC8rr: return expandCMPC8(MBB, MI);
   case SM83::CMP16rr: return expandCMP16rr(MBB, MI);
@@ -487,6 +491,56 @@ bool SM83ExpandPseudo::expandSTORE_PTR8(MachineBasicBlock &MBB,
   }
   // LD (HL), src
   BuildMI(MBB, MI, DL, TII->get(SM83::LDHLr)).addReg(SrcReg);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandLOAD_PTR16(MachineBasicBlock &MBB,
+                                        MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register DstReg = MI->getOperand(0).getReg();
+  Register PtrReg = MI->getOperand(1).getReg();
+  const SM83RegisterInfo &RI = TII->getRegisterInfo();
+  Register DstLo = RI.getSubReg(DstReg, SM83::sub_lo);
+  Register DstHi = RI.getSubReg(DstReg, SM83::sub_hi);
+
+  // Copy ptr to HL if not already there.
+  if (PtrReg != SM83::HL) {
+    Register PtrLo = RI.getSubReg(PtrReg, SM83::sub_lo);
+    Register PtrHi = RI.getSubReg(PtrReg, SM83::sub_hi);
+    BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::L).addReg(PtrLo);
+    BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::H).addReg(PtrHi);
+  }
+  // LD A,(HL+); LD dst.lo,A; LD dst.hi,(HL)
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDA_HLI));
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), DstLo).addReg(SM83::A);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrHL), DstHi);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandSTORE_PTR16(MachineBasicBlock &MBB,
+                                          MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register SrcReg = MI->getOperand(0).getReg();
+  Register PtrReg = MI->getOperand(1).getReg();
+  const SM83RegisterInfo &RI = TII->getRegisterInfo();
+  Register SrcLo = RI.getSubReg(SrcReg, SM83::sub_lo);
+  Register SrcHi = RI.getSubReg(SrcReg, SM83::sub_hi);
+
+  // Copy ptr to HL if not already there.
+  if (PtrReg != SM83::HL) {
+    Register PtrLo = RI.getSubReg(PtrReg, SM83::sub_lo);
+    Register PtrHi = RI.getSubReg(PtrReg, SM83::sub_hi);
+    BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::L).addReg(PtrLo);
+    BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::H).addReg(PtrHi);
+  }
+  // LD A,src.lo; LD (HL+),A; LD (HL),src.hi
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDrr), SM83::A).addReg(SrcLo);
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLI_A));
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDHLr)).addReg(SrcHi);
 
   MI->eraseFromParent();
   return true;
