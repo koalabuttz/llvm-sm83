@@ -16,5 +16,7 @@
   "no-default-libraries": true,
   "relocation-model": "static",
   "code-model": "small",
-  "emit-debug-gdb-scripts": false
+  "emit-debug-gdb-scripts": false,
+  "frame-pointer": "none",
+  "max-atomic-width": 0
 }

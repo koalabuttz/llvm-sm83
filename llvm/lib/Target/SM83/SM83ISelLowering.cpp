@@ -542,7 +542,35 @@ MachineBasicBlock *SM83TargetLowering::insertShift(MachineInstr &MI,
     uint8_t N = Is16 ? (RawImm & 0xF) : (RawImm & 0x7);
     // For i16 shifts >= 8 the loop handles the byte-boundary case correctly;
     // skip unrolling and fall through to the loop path below.
-    if (Is16 && N > 7) goto use_loop;
+    if (Is16 && N > 7) {
+      if (N == 8 && Opc != SM83::SRA16rr) {
+        // Byte-swap optimisation: shift-by-8 is just a register move + zero.
+        // shl i16, 8 : result_hi = src_lo, result_lo = 0  (2 instructions)
+        // lshr i16, 8: result_lo = src_hi, result_hi = 0  (2 instructions)
+        Register CurLo = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+        Register CurHi = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+        BuildMI(*MBB, MI, DL, TII.get(TargetOpcode::COPY), CurLo)
+            .addReg(SrcReg, RegState::NoFlags, SM83::sub_lo);
+        BuildMI(*MBB, MI, DL, TII.get(TargetOpcode::COPY), CurHi)
+            .addReg(SrcReg, RegState::NoFlags, SM83::sub_hi);
+
+        Register NewLo = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+        Register NewHi = MRI.createVirtualRegister(&SM83::GPR8RegClass);
+        if (Opc == SM83::SHL16rr) {
+          BuildMI(*MBB, MI, DL, TII.get(SM83::LDri), NewLo).addImm(0);
+          BuildMI(*MBB, MI, DL, TII.get(SM83::LDrr), NewHi).addReg(CurLo);
+        } else { // SRL16rr
+          BuildMI(*MBB, MI, DL, TII.get(SM83::LDrr), NewLo).addReg(CurHi);
+          BuildMI(*MBB, MI, DL, TII.get(SM83::LDri), NewHi).addImm(0);
+        }
+        BuildMI(*MBB, MI, DL, TII.get(TargetOpcode::REG_SEQUENCE), DstReg)
+            .addReg(NewLo).addImm(SM83::sub_lo)
+            .addReg(NewHi).addImm(SM83::sub_hi);
+        MI.eraseFromParent();
+        return MBB;
+      }
+      goto use_loop;
+    }
 
     if (Is16) {
       // Extract lo/hi from GR16 source.
@@ -873,22 +901,19 @@ SDValue SM83TargetLowering::LowerReturn(
     const SmallVectorImpl<ISD::OutputArg> &Outs,
     const SmallVectorImpl<SDValue> &OutVals, const SDLoc &dl,
     SelectionDAG &DAG) const {
+  MachineFunction &MF = DAG.getMachineFunction();
   SDValue Glue;
   SmallVector<SDValue, 4> RetOps(1, Chain);
 
-  for (unsigned i = 0, e = Outs.size(); i != e; ++i) {
-    MVT VT = Outs[i].VT;
-    Register Reg;
-    if (VT == MVT::i8)
-      Reg = SM83::A;
-    else if (VT == MVT::i16)
-      Reg = SM83::HL;
-    else
-      report_fatal_error("SM83: unsupported return type");
+  SmallVector<CCValAssign, 4> RVLocs;
+  CCState CCInfo(CallConv, isVarArg, MF, RVLocs, *DAG.getContext());
+  CCInfo.AnalyzeReturn(Outs, RetCC_SM83);
 
-    Chain = DAG.getCopyToReg(Chain, dl, Reg, OutVals[i], Glue);
+  for (auto &VA : RVLocs) {
+    Chain = DAG.getCopyToReg(Chain, dl, VA.getLocReg(),
+                             OutVals[VA.getValNo()], Glue);
     Glue = Chain.getValue(1);
-    RetOps.push_back(DAG.getRegister(Reg, VT));
+    RetOps.push_back(DAG.getRegister(VA.getLocReg(), VA.getLocVT()));
   }
 
   RetOps[0] = Chain;
@@ -992,19 +1017,15 @@ SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   InGlue = Chain.getValue(1);
 
   // Handle return values.
-  for (unsigned i = 0, e = Ins.size(); i != e; ++i) {
-    Register Reg;
-    MVT VT = Ins[i].VT;
-    if (VT == MVT::i8)
-      Reg = SM83::A;
-    else if (VT == MVT::i16)
-      Reg = SM83::HL;
-    else
-      report_fatal_error("SM83: unsupported return type in call");
+  SmallVector<CCValAssign, 4> RVLocs;
+  CCState RetInfo(CallConv, isVarArg, MF, RVLocs, *DAG.getContext());
+  RetInfo.AnalyzeCallResult(Ins, RetCC_SM83);
 
-    SDValue Val = DAG.getCopyFromReg(Chain, DL, Reg, VT, InGlue);
+  for (auto &VA : RVLocs) {
+    SDValue Val = DAG.getCopyFromReg(Chain, DL, VA.getLocReg(),
+                                     VA.getLocVT(), InGlue);
     InVals.push_back(Val.getValue(0));
-    Chain = Val.getValue(1);
+    Chain  = Val.getValue(1);
     InGlue = Val.getValue(2);
   }
 

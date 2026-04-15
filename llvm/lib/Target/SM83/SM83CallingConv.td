@@ -15,9 +15,14 @@
 // SM83 Return Value Calling Convention
 //===----------------------------------------------------------------------===//
 
+// Return values use the same register order as arguments.
+// First i8 return → A; second → C; third → B; fourth → E; fifth → D.
+// First i16 return → HL; second → BC; third → DE.
+// This allows returning Option<u8>, (u8,u8), and other small aggregates
+// without spilling to the stack.
 def RetCC_SM83 : CallingConv<[
-  CCIfType<[i8], CCAssignToReg<[A]>>,
-  CCIfType<[i16], CCAssignToReg<[HL]>>
+  CCIfType<[i8],  CCAssignToReg<[A, C, B, E, D]>>,
+  CCIfType<[i16], CCAssignToReg<[HL, BC, DE]>>
 ]>;
 
 //===----------------------------------------------------------------------===//
