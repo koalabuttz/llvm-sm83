@@ -35,6 +35,8 @@ public:
                               MachineBasicBlock *MBB) const override;
 
 private:
+  SDValue LowerATOMIC_LOAD(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerATOMIC_STORE(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerExternalSymbol(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG) const;

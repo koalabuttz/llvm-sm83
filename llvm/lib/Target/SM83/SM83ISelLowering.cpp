@@ -227,6 +227,28 @@ SM83TargetLowering::SM83TargetLowering(const SM83TargetMachine &TM,
     setOperationAction(ISD::SELECT_CC, VT, Expand);
   }
 
+  // SM83 is single-threaded: atomic loads/stores are just plain loads/stores.
+  // Custom-lower them to strip the atomic ordering and emit regular operations.
+  for (MVT VT : {MVT::i8, MVT::i16}) {
+    setOperationAction(ISD::ATOMIC_LOAD, VT, Custom);
+    setOperationAction(ISD::ATOMIC_STORE, VT, Custom);
+    // Atomic RMW operations — expand to load/op/store sequences.
+    setOperationAction(ISD::ATOMIC_LOAD_ADD, VT, Expand);
+    setOperationAction(ISD::ATOMIC_LOAD_SUB, VT, Expand);
+    setOperationAction(ISD::ATOMIC_LOAD_AND, VT, Expand);
+    setOperationAction(ISD::ATOMIC_LOAD_OR, VT, Expand);
+    setOperationAction(ISD::ATOMIC_LOAD_XOR, VT, Expand);
+    setOperationAction(ISD::ATOMIC_LOAD_NAND, VT, Expand);
+    setOperationAction(ISD::ATOMIC_LOAD_MIN, VT, Expand);
+    setOperationAction(ISD::ATOMIC_LOAD_MAX, VT, Expand);
+    setOperationAction(ISD::ATOMIC_LOAD_UMIN, VT, Expand);
+    setOperationAction(ISD::ATOMIC_LOAD_UMAX, VT, Expand);
+    setOperationAction(ISD::ATOMIC_SWAP, VT, Expand);
+    setOperationAction(ISD::ATOMIC_CMP_SWAP, VT, Expand);
+  }
+  // Fences are no-ops on single-threaded SM83.
+  setOperationAction(ISD::ATOMIC_FENCE, MVT::Other, Custom);
+
   setMinFunctionAlignment(Align(1));
 }
 
@@ -245,12 +267,37 @@ SDValue SM83TargetLowering::LowerOperation(SDValue Op,
     return LowerSETCC(Op, DAG);
   case ISD::MUL:
     return LowerMUL(Op, DAG);
+  case ISD::ATOMIC_LOAD:
+    return LowerATOMIC_LOAD(Op, DAG);
+  case ISD::ATOMIC_STORE:
+    return LowerATOMIC_STORE(Op, DAG);
+  case ISD::ATOMIC_FENCE:
+    // Single-threaded: fences are no-ops. Just return the chain.
+    return Op.getOperand(0);
   case ISD::DYNAMIC_STACKALLOC:
     report_fatal_error("SM83 does not support variable-length arrays (VLAs) "
                        "or dynamic stack allocation");
   default:
     report_fatal_error("SM83: unimplemented operand");
   }
+}
+
+SDValue SM83TargetLowering::LowerATOMIC_LOAD(SDValue Op,
+                                             SelectionDAG &DAG) const {
+  // SM83 is single-threaded: atomic load → plain load.
+  auto *AN = cast<AtomicSDNode>(Op.getNode());
+  SDLoc DL(Op);
+  return DAG.getLoad(AN->getMemoryVT(), DL, AN->getChain(),
+                     AN->getBasePtr(), AN->getMemOperand());
+}
+
+SDValue SM83TargetLowering::LowerATOMIC_STORE(SDValue Op,
+                                              SelectionDAG &DAG) const {
+  // SM83 is single-threaded: atomic store → plain store.
+  auto *AN = cast<AtomicSDNode>(Op.getNode());
+  SDLoc DL(Op);
+  return DAG.getStore(AN->getChain(), DL, AN->getOperand(1),
+                      AN->getBasePtr(), AN->getMemOperand());
 }
 
 SDValue SM83TargetLowering::LowerGlobalAddress(SDValue Op,
