@@ -22,9 +22,19 @@ class SM83Sim:
         self.mem = bytearray(0x10000)
         # Keep the full ROM file in a separate buffer. Bank 0 ($0000-$3FFF)
         # is always visible; the bank window at $4000-$7FFF reflects
-        # self.rom_bank (writes to $2000-$3FFF update it per MBC1).
+        # self.rom_bank (writes to $2000-$3FFF update it per the active MBC).
         self.rom = bytes(rom_data)
-        self.rom_bank = 1  # MBC1 default at reset; also matches ROM-only.
+        self.rom_bank = 1  # MBC1/3 default at reset; also matches ROM-only.
+        # Detect MBC family from header byte $0147. MBC1/MBC3 use a single
+        # register at $2000-$3FFF; MBC3 masks 7 bits, MBC1 masks 5. Both
+        # remap bank 0 → 1.
+        cart_type = rom_data[0x0147] if len(rom_data) > 0x0147 else 0
+        if 0x0F <= cart_type <= 0x13:
+            self.mbc = 'mbc3'
+        elif 0x01 <= cart_type <= 0x03:
+            self.mbc = 'mbc1'
+        else:
+            self.mbc = 'rom'
         # Bank 0 into the memory array so reads through self.mem work.
         bank0_len = min(len(rom_data), 0x4000)
         self.mem[0:bank0_len] = rom_data[:bank0_len]
@@ -146,10 +156,12 @@ class SM83Sim:
     def write8(self, addr, val):
         addr &= 0xFFFF
         val &= 0xFF
-        # MBC1 bank select: $2000-$3FFF writes the low 5 bits of the ROM
-        # bank number. Hardware remaps 0 to 1 (cannot select bank 0 here).
+        # MBC bank-register writes: MBC1/3 use a single register at
+        # $2000-$3FFF. Hardware width varies by chip (MBC1=5 bits,
+        # MBC3=7 bits); we use each chip's native mask and remap bank 0 → 1.
         if 0x2000 <= addr < 0x4000:
-            bank = val & 0x1F
+            mask = 0x7F if self.mbc == 'mbc3' else 0x1F
+            bank = val & mask
             self.rom_bank = bank if bank else 1
             return
         # ROM region $0000-$7FFF is otherwise read-only (RAM enable at

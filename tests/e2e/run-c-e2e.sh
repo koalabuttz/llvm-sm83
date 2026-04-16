@@ -273,6 +273,44 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# --- MBC3 bank switching test (Round 6 item 2) ------------------------------
+echo ""
+echo "10. Compiling mbc3-test.c (ROM bank 5 access via BANK_SWITCH, --mbc3)..."
+"$CLANG" --target=sm83-unknown-none -ffreestanding -O1 \
+  -c "$SCRIPT_DIR/mbc3-test.c" -o "$TMPDIR/mbc3-test.o"
+check "mbc3-test.o has .romx.bank5 section" \
+  "'$OBJDUMP' -h '$TMPDIR/mbc3-test.o' 2>&1 | grep -q '\\.romx\\.bank5'"
+
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/mbc3-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" \
+  -o "$TMPDIR/mbc3-test.elf"
+check "mbc3-test.elf built" test -f "$TMPDIR/mbc3-test.elf"
+
+# 8 banks (128 KB) so bank 5 (LMA $14000) is in-file.
+python3 "$MAKEROM" "$TMPDIR/mbc3-test.elf" -o "$TMPDIR/mbc3-test.gb" \
+  --mbc3 --rom-banks 8 >/dev/null
+
+MBC_BYTE=$(python3 -c "print('%02x' % open('$TMPDIR/mbc3-test.gb','rb').read()[0x147])")
+ROMSIZE_BYTE=$(python3 -c "print('%02x' % open('$TMPDIR/mbc3-test.gb','rb').read()[0x148])")
+FILESIZE=$(stat -c%s "$TMPDIR/mbc3-test.gb")
+if [ "$MBC_BYTE" = "13" ] && [ "$ROMSIZE_BYTE" = "02" ] && [ "$FILESIZE" -eq 131072 ]; then
+  echo "  PASS: MBC3 header (\$0147=\$13, \$0148=\$02) and 128 KB file"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: MBC3 header got \$0147=\$$MBC_BYTE \$0148=\$$ROMSIZE_BYTE file=$FILESIZE bytes"
+  FAIL=$((FAIL + 1))
+fi
+
+python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/mbc3-test.gb" \
+  --check C100=DE --check C101=AD --check C102=BE --check C103=EF
+HARNESS_RC=$?
+if [ $HARNESS_RC -eq 0 ]; then
+  echo "  PASS: BANK_SWITCH(5) payload copy produced DEADBEEF at \$C100"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: MBC3 bank-5 read did not produce expected payload"
+  FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

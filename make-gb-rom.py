@@ -29,6 +29,7 @@ ROM_SIZE = 32768  # Default for ROM-only carts. MBC1 expands via --rom-banks.
 # Cartridge type byte ($0147).
 CART_ROM_ONLY = 0x00
 CART_MBC1     = 0x01
+CART_MBC3     = 0x13  # MBC3 + RAM + BATTERY (no RTC runtime yet)
 
 # CGB flag byte ($0143).
 CGB_DMG_ONLY      = 0x00  # DMG (monochrome) only; CGB boots in compat mode.
@@ -217,7 +218,7 @@ def build_rom(elf_data, title="SM83PROG", mbc=CART_ROM_ONLY, rom_banks=2,
     # CGB flag at $0143: 0x00/0x80/0xC0 per --dmg-only / default / --cgb-only.
     rom[0x0143] = cgb_flag
 
-    # Cartridge type at $0147: ROM-only or MBC1 per --mbc1.
+    # Cartridge type at $0147: ROM-only / MBC1 / MBC3 / MBC5.
     rom[0x0147] = mbc
 
     # ROM size at $0148: log2(banks)-1 form.
@@ -307,8 +308,14 @@ def main():
                         help="Validate an existing .gb file's checksums")
     parser.add_argument("--emit-sym", metavar="PATH",
                         help="Also write a BGB/Emulicious-format .sym file")
-    parser.add_argument("--mbc1", action="store_true",
-                        help="Stamp cartridge type $0147 = MBC1 (default: ROM-only)")
+    mbc_group = parser.add_mutually_exclusive_group()
+    mbc_group.add_argument("--mbc1", action="store_const",
+                           dest="mbc", const=CART_MBC1,
+                           help="Stamp cartridge type $0147 = MBC1 ($01)")
+    mbc_group.add_argument("--mbc3", action="store_const",
+                           dest="mbc", const=CART_MBC3,
+                           help="Stamp cartridge type $0147 = MBC3+RAM+BATTERY ($13)")
+    parser.set_defaults(mbc=CART_ROM_ONLY)
     parser.add_argument("--rom-banks", type=int, default=2,
                         choices=sorted(b for b in ROM_BANK_BYTE if b >= 2),
                         help="Number of 16 KB ROM banks (default: 2 = 32 KB)")
@@ -340,8 +347,7 @@ def main():
     with open(args.input, 'rb') as f:
         elf_data = f.read()
 
-    mbc = CART_MBC1 if args.mbc1 else CART_ROM_ONLY
-    rom = build_rom(elf_data, title=args.title, mbc=mbc,
+    rom = build_rom(elf_data, title=args.title, mbc=args.mbc,
                     rom_banks=args.rom_banks, cgb_flag=args.cgb_flag)
 
     with open(args.output, 'wb') as f:

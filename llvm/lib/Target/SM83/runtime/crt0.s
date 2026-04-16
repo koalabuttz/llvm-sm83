@@ -22,10 +22,11 @@ _start:
     ld      sp, _stack_top          ; SP = $DFFF (top of WRAM)
 
     ; -----------------------------------------------------------------------
-    ; 1a. Force MBC1 bank 1 at $4000 for determinism. MBC1 auto-maps bank 1
+    ; 1a. Force bank 1 at $4000 for determinism. MBC1/MBC3 auto-map bank 1
     ;     on cold reset, but a soft reset may leave a higher bank selected;
     ;     writing 1 to $2000 is a no-op on ROM-only carts so this is safe
-    ;     for both cartridge types.
+    ;     for ROM-only, MBC1, and MBC3. MBC5 has a second bank register at
+    ;     $3000 (upper bit); link crt0-mbc5.s instead when targeting MBC5.
     ; -----------------------------------------------------------------------
     ld      a, 1
     ld      [0x2000], a
