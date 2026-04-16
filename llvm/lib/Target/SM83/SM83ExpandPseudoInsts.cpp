@@ -51,6 +51,8 @@ private:
               const DebugLoc &DL, Register DstReg, Register SrcReg);
   bool expandALU8rr(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
                     unsigned ALUOpc);
+  bool expandALU8ri(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+                    unsigned ALUOpc);
   bool expandCMP8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandBRCOND(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLOAD8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
@@ -111,6 +113,8 @@ bool SM83ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case SM83::AND8rr: return expandALU8rr(MBB, MI, SM83::ANDr);
   case SM83::OR8rr:  return expandALU8rr(MBB, MI, SM83::ORr);
   case SM83::XOR8rr: return expandALU8rr(MBB, MI, SM83::XORr);
+  case SM83::ADD8ri: return expandALU8ri(MBB, MI, SM83::ADDi);
+  case SM83::SUB8ri: return expandALU8ri(MBB, MI, SM83::SUBi);
   case SM83::CMP8rr: return expandCMP8(MBB, MI);
   case SM83::BRCONDcc: return expandBRCOND(MBB, MI);
   case SM83::LOAD8: return expandLOAD8(MBB, MI);
@@ -162,6 +166,7 @@ bool SM83ExpandPseudo::expandALU8rr(MachineBasicBlock &MBB,
   Register DstReg = MI->getOperand(0).getReg();
   Register Src1Reg = MI->getOperand(1).getReg();
   Register Src2Reg = MI->getOperand(2).getReg();
+  assert(Src2Reg != SM83::A && "src2 must not be A — LD A,src1 would clobber it");
 
   // LD A, src1 (skip if already A)
   emitLD(MBB, MI, DL, SM83::A, Src1Reg);
@@ -175,11 +180,32 @@ bool SM83ExpandPseudo::expandALU8rr(MachineBasicBlock &MBB,
   return true;
 }
 
+bool SM83ExpandPseudo::expandALU8ri(MachineBasicBlock &MBB,
+                                    MachineBasicBlock::iterator MI,
+                                    unsigned ALUOpc) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register DstReg = MI->getOperand(0).getReg();
+  Register SrcReg = MI->getOperand(1).getReg();
+  int64_t Imm = MI->getOperand(2).getImm();
+
+  // LD A, src (skip if already A)
+  emitLD(MBB, MI, DL, SM83::A, SrcReg);
+  // ALU A, imm8
+  BuildMI(MBB, MI, DL, TII->get(ALUOpc))
+      .addImm(Imm);
+  // LD dst, A (skip if already A)
+  emitLD(MBB, MI, DL, DstReg, SM83::A);
+
+  MI->eraseFromParent();
+  return true;
+}
+
 bool SM83ExpandPseudo::expandCMP8(MachineBasicBlock &MBB,
                                   MachineBasicBlock::iterator MI) {
   DebugLoc DL = MI->getDebugLoc();
   Register LHSReg = MI->getOperand(0).getReg();
   Register RHSReg = MI->getOperand(1).getReg();
+  assert(RHSReg != SM83::A && "rhs must not be A — LD A,lhs would clobber it");
 
   // LD A, lhs (skip if already A)
   emitLD(MBB, MI, DL, SM83::A, LHSReg);
@@ -401,6 +427,7 @@ bool SM83ExpandPseudo::expandCMPC8(MachineBasicBlock &MBB,
   DebugLoc DL = MI->getDebugLoc();
   Register LHSReg = MI->getOperand(0).getReg();
   Register RHSReg = MI->getOperand(1).getReg();
+  assert(RHSReg != SM83::A && "rhs must not be A — LD A,lhs would clobber it");
 
   // LD A, lhs; SBC A, rhs — subtracts rhs and carry from A, sets flags.
   // Used as the hi-byte step after CMP8rr on lo bytes for 16-bit comparison.

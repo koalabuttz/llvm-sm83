@@ -207,16 +207,18 @@ let mayStore = 1, hasSideEffects = 0, mayLoad = 0, Defs = [HL, F] in
 def STORE_STACK8 : Pseudo<(outs), (ins GPR8:$src, i16imm:$offset),
                           "# STORE_STACK8 SP+$offset, $src", []>;
 
-// CMP pseudo — expanded to LD A, src1 / CP src2. Sets flags.
-let Defs = [F] in
-def CMP8rr : Pseudo<(outs), (ins GPR8:$lhs, GPR8:$rhs),
+// CMP pseudo — expanded to LD A, lhs / CP rhs. Sets flags.
+// rhs must NOT be A: LD A, lhs would clobber A before CP reads it.
+let Defs = [A, F] in
+def CMP8rr : Pseudo<(outs), (ins GPR8:$lhs, GR8:$rhs),
                     "# CMP8 $lhs, $rhs",
                     [(SM83cmp i8:$lhs, i8:$rhs)]>;
 
-// CMPC pseudo — compare with carry. Expanded to LD A, src1 / SBC A, src2.
+// CMPC pseudo — compare with carry. Expanded to LD A, lhs / SBC A, rhs.
 // Used as second step of 16-bit comparison (after CMP8rr on lo bytes).
-let Defs = [F], Uses = [F] in
-def CMPC8rr : Pseudo<(outs), (ins GPR8:$lhs, GPR8:$rhs),
+// rhs must NOT be A for the same reason as CMP8rr.
+let Defs = [A, F], Uses = [F] in
+def CMPC8rr : Pseudo<(outs), (ins GPR8:$lhs, GR8:$rhs),
                      "# CMPC8 $lhs, $rhs",
                      [(SM83cmpc i8:$lhs, i8:$rhs)]>;
 
@@ -254,22 +256,36 @@ def BRCONDcc : Pseudo<(outs), (ins brtarget:$target, i8imm:$cc),
 // the register allocator needs to see two-operand instructions.
 //===----------------------------------------------------------------------===//
 
-let Defs = [F] in {
-def ADD8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
+// src2 must NOT be A: the expansion does LD A, src1 first, so if src2
+// were also A, the original A value would be clobbered before the ALU op.
+// GR8 = {B,C,D,E,H,L} excludes A. For commutative ops ISel can swap operands.
+let Defs = [A, F] in {
+def ADD8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GR8:$src2),
                     "# ADD8 $dst, $src1, $src2",
                     [(set i8:$dst, (add i8:$src1, i8:$src2))]>;
-def SUB8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
+def SUB8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GR8:$src2),
                     "# SUB8 $dst, $src1, $src2",
                     [(set i8:$dst, (sub i8:$src1, i8:$src2))]>;
-def AND8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
+def AND8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GR8:$src2),
                     "# AND8 $dst, $src1, $src2",
                     [(set i8:$dst, (and i8:$src1, i8:$src2))]>;
-def OR8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
+def OR8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GR8:$src2),
                    "# OR8 $dst, $src1, $src2",
                    [(set i8:$dst, (or i8:$src1, i8:$src2))]>;
-def XOR8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
+def XOR8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GR8:$src2),
                     "# XOR8 $dst, $src1, $src2",
                     [(set i8:$dst, (xor i8:$src1, i8:$src2))]>;
+}
+
+// i8 ALU with immediate — expanded to LD A, src / ALUi imm / LD dst, A.
+// Avoids materializing the immediate into a register.
+let Defs = [A, F] in {
+def ADD8ri : Pseudo<(outs GPR8:$dst), (ins GPR8:$src, i8imm:$imm),
+                    "# ADD8ri $dst, $src, $imm",
+                    [(set i8:$dst, (add i8:$src, imm:$imm))]>;
+def SUB8ri : Pseudo<(outs GPR8:$dst), (ins GPR8:$src, i8imm:$imm),
+                    "# SUB8ri $dst, $src, $imm",
+                    [(set i8:$dst, (sub i8:$src, imm:$imm))]>;
 }
 
 // i16 ADD pseudo — expanded to copy src1 to HL, then ADD HL,src2.
@@ -280,14 +296,14 @@ def ADD16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src1, GR16NoHL:$src2),
                      "# ADD16 $dst, $src1, $src2",
                      [(set i16:$dst, (add i16:$src1, GR16NoHL:$src2))]>;
 
-// i16 SUB pseudo — expanded to lo/hi byte subtraction.
-let Defs = [F] in
+// i16 SUB pseudo — expanded to lo/hi byte subtraction via accumulator A.
+let Defs = [A, F] in
 def SUB16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
                      "# SUB16 $dst, $src1, $src2",
                      [(set i16:$dst, (sub i16:$src1, i16:$src2))]>;
 
-// i16 bitwise pseudos — lo/hi byte decomposition.
-let Defs = [F] in {
+// i16 bitwise pseudos — lo/hi byte decomposition via accumulator A.
+let Defs = [A, F] in {
 def AND16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
                      "# AND16 $dst, $src1, $src2",
                      [(set i16:$dst, (and i16:$src1, i16:$src2))]>;
@@ -323,12 +339,14 @@ def SRA16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src, GPR8:$amt),
 }
 
 // i16 load/store from global address.
-let mayLoad = 1, hasSideEffects = 0 in
+// Expansion uses HL for addressing and A for byte transfer (LDA_HLI).
+let mayLoad = 1, hasSideEffects = 0, Defs = [HL, A] in
 def LOAD16 : Pseudo<(outs GR16:$dst), (ins i16imm:$addr),
                     "# LOAD16 $dst, [$addr]",
                     [(set i16:$dst, (load (SM83Wrapper tglobaladdr:$addr)))]>;
 
-let mayStore = 1, hasSideEffects = 0 in
+// Expansion uses HL for addressing and A for byte transfer (LDHLI_A).
+let mayStore = 1, hasSideEffects = 0, Defs = [HL, A] in
 def STORE16 : Pseudo<(outs), (ins GR16:$src, i16imm:$addr),
                      "# STORE16 [$addr], $src",
                      [(store i16:$src, (SM83Wrapper tglobaladdr:$addr))]>;
@@ -648,6 +666,11 @@ def DECr : SM83Inst8<(outs GPR8:$dst), (ins GPR8:$src),
   let Constraints = "$src = $dst";
 }
 }
+
+// INC/DEC patterns for add/sub by 1 — these are real hardware instructions
+// that operate in-place and do NOT clobber A, unlike the ALU8 pseudos.
+def : Pat<(add i8:$src, (i8 1)), (INCr GPR8:$src)>;
+def : Pat<(add i8:$src, (i8 -1)), (DECr GPR8:$src)>;
 
 // INC/DEC (HL) — memory
 let Defs = [F], Uses = [HL], mayLoad = 1, mayStore = 1, hasSideEffects = 0 in {
