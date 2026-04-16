@@ -75,11 +75,12 @@ memset:
 	inc hl
 	ld d, [hl]          ; DE = n
 	; If n == 0, return
-	ld h, d
-	ld l, e
-	ld l, d
+	ld a, d
 	or e
 	jr z, .memset_done
+	; Reload fill value (A was consumed by zero-check above)
+	ld hl, sp + 4
+	ld a, [hl]
 	; Use HL as pointer (copy dst from BC)
 	ld h, b
 	ld l, c

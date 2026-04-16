@@ -12,12 +12,14 @@
 // ($A000–$BFFF), WRAM ($C000–$DFFF), and HRAM ($FF80–$FFFE).
 //
 // SM83 ELF relocations reuse i386 relocation numbers (R_386_*) because the
-// architecture has no official ELF ABI and unofficial numbers would conflict.
-// The four types used:
+// architecture has no official ELF ABI.  SM83-specific numbers (R_SM83_8 = 1,
+// R_SM83_16 = 2, …) would collide with R_386_32/PC32/… making backward
+// compatibility with pre-built rustc impossible without a full toolchain rebuild.
+// When an official SM83 ELF ABI is ratified, switch to R_SM83_* everywhere.
 //
-//   R_386_8   (1)  — 8-bit absolute (data bytes, LDH immediates)
-//   R_386_16 (20)  — 16-bit absolute LE (CALL/JP targets, 16-bit data)
-//   R_386_32  (1)  — 32-bit absolute LE (rare; section-relative offsets)
+//   R_386_8   (22) — 8-bit absolute (data bytes, LDH immediates)
+//   R_386_16  (20) — 16-bit absolute LE (CALL/JP targets, 16-bit data)
+//   R_386_32   (1) — 32-bit absolute LE (rare; section-relative offsets)
 //   R_386_PC8 (23) — 8-bit PC-relative signed (JR ±127 branches)
 //
 // For R_386_PC8 the assembler emits fixup_pcrel_8 which stores

@@ -1,0 +1,14 @@
+#ifndef ELF_RELOC
+#error "ELF_RELOC must be defined"
+#endif
+
+// SM83 ELF relocation types.
+// SM83 has no official ELF machine number; EM_SM83 = 0x5383 is an unofficial
+// value used by this backend.  These relocation type numbers are likewise
+// unofficial and private to this toolchain.
+
+ELF_RELOC(R_SM83_NONE,    0)  // No relocation
+ELF_RELOC(R_SM83_8,       1)  // 8-bit absolute
+ELF_RELOC(R_SM83_16,      2)  // 16-bit absolute
+ELF_RELOC(R_SM83_8_PCREL, 3)  // 8-bit PC-relative (JR offset)
+ELF_RELOC(R_SM83_32,      4)  // 32-bit absolute
