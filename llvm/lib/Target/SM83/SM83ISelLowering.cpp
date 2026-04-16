@@ -1069,4 +1069,70 @@ SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   return Chain;
 }
 
+TargetLowering::ConstraintType
+SM83TargetLowering::getConstraintType(StringRef Constraint) const {
+  if (Constraint.size() == 1) {
+    switch (Constraint[0]) {
+    // Specific 8-bit registers.
+    case 'a': // A (accumulator)
+    case 'b': // B
+    case 'c': // C
+    case 'd': // D
+    case 'e': // E
+    case 'h': // H
+    case 'l': // L
+      return C_Register;
+    // Any 8-bit register — handled by C_RegisterClass.
+    case 'r':
+      return C_RegisterClass;
+    // 8-bit unsigned immediate [0, 255].
+    case 'I':
+      return C_Immediate;
+    default:
+      break;
+    }
+  }
+  return TargetLowering::getConstraintType(Constraint);
+}
+
+std::pair<unsigned, const TargetRegisterClass *>
+SM83TargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
+                                                  StringRef Constraint,
+                                                  MVT VT) const {
+  if (Constraint.size() == 1) {
+    switch (Constraint[0]) {
+    case 'a': return {SM83::A, &SM83::GPR8RegClass};
+    case 'b': return {SM83::B, &SM83::GR8RegClass};
+    case 'c': return {SM83::C, &SM83::GR8RegClass};
+    case 'd': return {SM83::D, &SM83::GR8RegClass};
+    case 'e': return {SM83::E, &SM83::GR8RegClass};
+    case 'h': return {SM83::H, &SM83::GR8RegClass};
+    case 'l': return {SM83::L, &SM83::GR8RegClass};
+    case 'r':
+      if (VT == MVT::i8)
+        return {0U, &SM83::GPR8RegClass};
+      break;
+    }
+  }
+  return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
+}
+
+void SM83TargetLowering::LowerAsmOperandForConstraint(
+    SDValue Op, StringRef Constraint, std::vector<SDValue> &Ops,
+    SelectionDAG &DAG) const {
+  if (Constraint.size() != 1)
+    return;
+  if (Constraint[0] == 'I') {
+    const ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op);
+    if (!C)
+      return;
+    uint64_t Val = C->getZExtValue();
+    if (Val > 255)
+      return;
+    Ops.push_back(DAG.getTargetConstant(Val, SDLoc(Op), Op.getValueType()));
+    return;
+  }
+  TargetLowering::LowerAsmOperandForConstraint(Op, Constraint, Ops, DAG);
+}
+
 } // end namespace llvm

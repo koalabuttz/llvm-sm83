@@ -17,6 +17,7 @@
 //   4. Consecutive LD A, r; LD A, r → single LD A, r
 //   5. LD A, r; CP s; LD A, r → LD A, r; CP s (CP doesn't clobber A)
 //   6. <ALU op writing A,F>; CP 0 → remove CP 0 (ALU already set Z)
+//   7. LDrr A, Rx (A dead) → remove (cascades from dead CP elimination)
 //
 //===----------------------------------------------------------------------===//
 
@@ -80,6 +81,11 @@ private:
   bool tryRemoveDeadCP(MachineBasicBlock &MBB,
                        MachineBasicBlock::iterator &MI);
 
+  /// Remove LDrr A, Rx when A is dead after the load.
+  /// Cascades from tryRemoveDeadCP: once the CP is gone the load has no consumer.
+  bool tryRemoveDeadLoadA(MachineBasicBlock &MBB,
+                          MachineBasicBlock::iterator &MI);
+
   /// Tail call: CALL foo; RET → JP foo (saves 1 byte + stack push/pop).
   bool tryTailCall(MachineBasicBlock &MBB,
                    MachineBasicBlock::iterator &MI);
@@ -94,10 +100,15 @@ INITIALIZE_PASS(SM83PeepholeOpt, DEBUG_TYPE, PASS_NAME, false, false)
 bool SM83PeepholeOpt::runOnMachineFunction(MachineFunction &MF) {
   TII = MF.getSubtarget<SM83Subtarget>().getInstrInfo();
   TRI = MF.getSubtarget().getRegisterInfo();
-  bool Modified = false;
-  for (auto &MBB : MF)
-    Modified |= optimizeMBB(MBB);
-  return Modified;
+  bool AnyModified = false;
+  bool Modified;
+  do {
+    Modified = false;
+    for (auto &MBB : MF)
+      Modified |= optimizeMBB(MBB);
+    AnyModified |= Modified;
+  } while (Modified);
+  return AnyModified;
 }
 
 bool SM83PeepholeOpt::optimizeMBB(MachineBasicBlock &MBB) {
@@ -119,6 +130,9 @@ bool SM83PeepholeOpt::optimizeMBB(MachineBasicBlock &MBB) {
     }
     if (MI != E) {
       Modified |= tryRemoveDeadCP(MBB, MI);
+    }
+    if (MI != E) {
+      Modified |= tryRemoveDeadLoadA(MBB, MI);
     }
     if (MI != E) {
       if (tryTailCall(MBB, MI)) {
@@ -479,6 +493,40 @@ bool SM83PeepholeOpt::tryRemoveDeadCP(MachineBasicBlock &MBB,
       return false;
     int64_t CC = I->getOperand(0).getImm();
     if (CC == 2 || CC == 3) // NC or C — reads carry
+      return false;
+  }
+
+  MI = MBB.erase(MI);
+  return true;
+}
+
+bool SM83PeepholeOpt::tryRemoveDeadLoadA(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator &MI) {
+  // Pattern: LDrr A, Rx where A is dead after this instruction.
+  // Arises when tryRemoveDeadCP eliminates the CPr/CPi that was the
+  // sole consumer of A — the load becomes unreachable.
+  if (MI->getOpcode() != SM83::LDrr)
+    return false;
+  Register DstReg = MI->getOperand(0).getReg();
+  if (DstReg != SM83::A)
+    return false;
+  Register SrcReg = MI->getOperand(1).getReg();
+  if (SrcReg == SM83::A)
+    return false; // Self-copy handled by tryRemoveSelfCopy.
+
+  // Scan forward: A must not be read before it is redefined or block ends.
+  auto Check = std::next(MachineBasicBlock::iterator(MI));
+  for (; Check != MBB.end(); ++Check) {
+    if (Check->readsRegister(SM83::A, TRI))
+      return false;
+    if (Check->definesRegister(SM83::A, TRI))
+      break; // A redefined first — dead here.
+  }
+  if (Check == MBB.end()) {
+    LivePhysRegs LR;
+    LR.init(*TRI);
+    LR.addLiveOuts(MBB);
+    if (LR.contains(SM83::A))
       return false;
   }
 

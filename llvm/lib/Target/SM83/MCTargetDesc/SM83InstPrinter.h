@@ -24,8 +24,9 @@ public:
   void printInst(const MCInst *MI, uint64_t Address, StringRef Annot,
                  const MCSubtargetInfo &STI, raw_ostream &O) override;
 
-private:
   static const char *getRegisterName(MCRegister Reg);
+
+private:
 
   void printOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
   void printCondCode(const MCInst *MI, unsigned OpNo, raw_ostream &O);

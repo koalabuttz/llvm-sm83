@@ -13,6 +13,7 @@
 #include "SM83MachineFunctionInfo.h"
 #include "SM83Subtarget.h"
 
+#include "llvm/ADT/Twine.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -44,6 +45,13 @@ void SM83FrameLowering::emitPrologue(MachineFunction &MF,
   uint64_t StackSize = MFI.getStackSize();
   if (StackSize == 0)
     return;
+
+  // WRAM is $C000–$DFFF = 8192 bytes.  A frame this large would overflow
+  // into VRAM or beyond and corrupt memory silently.  Fail loudly instead.
+  if (StackSize > 7680)
+    MF.getFunction().getContext().emitError(
+        Twine("SM83: stack frame too large (") + Twine(StackSize) +
+        " bytes); WRAM is 8 KB — reduce local variables or split the function");
 
   // SM83 can adjust SP by a signed 8-bit immediate with ADD SP, imm8s.
   // For larger frames, emit multiple ADD SP instructions.

@@ -10,6 +10,7 @@
 #include "SM83MCInstLower.h"
 #include "SM83Subtarget.h"
 #include "SM83TargetMachine.h"
+#include "MCTargetDesc/SM83InstPrinter.h"
 #include "TargetInfo/SM83TargetInfo.h"
 
 #include "llvm/CodeGen/AsmPrinter.h"
@@ -35,6 +36,9 @@ public:
 
   void emitInstruction(const MachineInstr *MI) override;
 
+  bool PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
+                       const char *ExtraCode, raw_ostream &O) override;
+
   static char ID;
 };
 
@@ -50,6 +54,26 @@ void SM83AsmPrinter::emitInstruction(const MachineInstr *MI) {
   MCInst TmpInst;
   MCInstLowering.lowerInstruction(*MI, TmpInst);
   EmitToStreamer(*OutStreamer, TmpInst);
+}
+
+bool SM83AsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
+                                     const char *ExtraCode, raw_ostream &O) {
+  // Let the base class handle modifier characters (c, n, s, a, ...).
+  if (!AsmPrinter::PrintAsmOperand(MI, OpNum, ExtraCode, O))
+    return false;
+
+  // Base class doesn't handle plain register/immediate operands.
+  const MachineOperand &MO = MI->getOperand(OpNum);
+  switch (MO.getType()) {
+  case MachineOperand::MO_Register:
+    O << SM83InstPrinter::getRegisterName(MO.getReg());
+    return false;
+  case MachineOperand::MO_Immediate:
+    O << MO.getImm();
+    return false;
+  default:
+    return true;
+  }
 }
 
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void

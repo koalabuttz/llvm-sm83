@@ -93,8 +93,18 @@ public:
     switch (*Name) {
     default:
       return false;
-    case 'r': // Any register
+    case 'a': // A register (accumulator)
+    case 'b': // B register
+    case 'c': // C register
+    case 'd': // D register
+    case 'e': // E register
+    case 'h': // H register
+    case 'l': // L register
+    case 'r': // Any 8-bit register
       Info.setAllowsRegister();
+      return true;
+    case 'I': // 8-bit unsigned immediate [0, 255]
+      Info.setRequiresImmediate(0, 255);
       return true;
     }
   }
