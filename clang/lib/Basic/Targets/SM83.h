@@ -100,7 +100,8 @@ public:
     case 'e': // E register
     case 'h': // H register
     case 'l': // L register
-    case 'r': // Any 8-bit register
+    case 'r': // Any general register (8-bit GPR8 or 16-bit pair GR16)
+    case 'q': // HL pair specifically (only pair usable with (HL) indirect)
       Info.setAllowsRegister();
       return true;
     case 'I': // 8-bit unsigned immediate [0, 255]

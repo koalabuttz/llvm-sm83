@@ -1081,8 +1081,10 @@ SM83TargetLowering::getConstraintType(StringRef Constraint) const {
     case 'e': // E
     case 'h': // H
     case 'l': // L
+    // Specific 16-bit pair: HL (only pair that supports indirect LD r,(HL)).
+    case 'q':
       return C_Register;
-    // Any 8-bit register — handled by C_RegisterClass.
+    // Any general register — 8-bit (GPR8) for i8, 16-bit pair (GR16) for i16.
     case 'r':
       return C_RegisterClass;
     // 8-bit unsigned immediate [0, 255].
@@ -1111,7 +1113,11 @@ SM83TargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
     case 'r':
       if (VT == MVT::i8)
         return {0U, &SM83::GPR8RegClass};
+      if (VT == MVT::i16)
+        return {0U, &SM83::GR16RegClass};
       break;
+    case 'q': // HL specifically — the only pair usable with (HL) indirect ops.
+      return {SM83::HL, &SM83::GR16RegClass};
     }
   }
   return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
