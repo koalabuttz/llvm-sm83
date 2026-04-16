@@ -16,6 +16,7 @@
 //   3. LD A, r; <ALU A, ...>; LD r, A → remove trailing LD when r is dead
 //   4. Consecutive LD A, r; LD A, r → single LD A, r
 //   5. LD A, r; CP s; LD A, r → LD A, r; CP s (CP doesn't clobber A)
+//   6. <ALU op writing A,F>; CP 0 → remove CP 0 (ALU already set Z)
 //
 //===----------------------------------------------------------------------===//
 
@@ -74,6 +75,11 @@ private:
   bool tryRemoveReloadAfterCP(MachineBasicBlock &MBB,
                               MachineBasicBlock::iterator &MI);
 
+  /// Remove CP 0 after an 8-bit ALU op that already set Z=(result==0).
+  /// CP 0 sets Z=(A==0) — identical to the ALU result already in A.
+  bool tryRemoveDeadCP(MachineBasicBlock &MBB,
+                       MachineBasicBlock::iterator &MI);
+
   /// Tail call: CALL foo; RET → JP foo (saves 1 byte + stack push/pop).
   bool tryTailCall(MachineBasicBlock &MBB,
                    MachineBasicBlock::iterator &MI);
@@ -110,6 +116,9 @@ bool SM83PeepholeOpt::optimizeMBB(MachineBasicBlock &MBB) {
     }
     if (MI != E) {
       Modified |= tryRemoveReloadAfterCP(MBB, MI);
+    }
+    if (MI != E) {
+      Modified |= tryRemoveDeadCP(MBB, MI);
     }
     if (MI != E) {
       if (tryTailCall(MBB, MI)) {
@@ -305,6 +314,175 @@ bool SM83PeepholeOpt::tryRemoveReloadAfterCP(
   }
 
   MBB.erase(Check);
+  return true;
+}
+
+bool SM83PeepholeOpt::tryRemoveDeadCP(MachineBasicBlock &MBB,
+                                      MachineBasicBlock::iterator &MI) {
+  // Patterns eliminated:
+  //   A) <ALU [A,F]>; CPi 0 → remove CPi 0
+  //   B) <ALU [A,F]>; [LD r,A]; [LDri R,0]; [LD A,r]; CPr R → remove CPr R
+  //      (codegen-typical form of the same redundancy)
+  //
+  // Any 8-bit ALU op that writes A sets Z=(result==0).
+  // CP 0 (whether CPi or CPr R where R==0) re-tests A==0 — identical.
+  //
+  // Safety: CP 0 also sets H=1, C=0, which may differ from the ALU op's H/C.
+  // Elimination is safe only when all F consumers between the CP and the next
+  // F-def use Z (condition NZ=0 or Z=1), not C (NC=2 or C=3).
+
+  if (MI == MBB.begin())
+    return false;
+
+  bool IsZeroCompare = false;
+  Register CmpReg;
+
+  if (MI->getOpcode() == SM83::CPi) {
+    if (MI->getOperand(0).getImm() != 0)
+      return false;
+    IsZeroCompare = true;
+  } else if (MI->getOpcode() == SM83::CPr) {
+    CmpReg = MI->getOperand(0).getReg();
+    // Scan backwards to find the most recent definition of CmpReg.
+    // Accept only LDri CmpReg, 0 (i.e. CmpReg is known to hold 0).
+    bool FoundDefInBlock = false;
+    for (auto I = std::prev(MachineBasicBlock::iterator(MI));; --I) {
+      if (I->definesRegister(CmpReg, TRI)) {
+        FoundDefInBlock = true;
+        if (I->getOpcode() == SM83::LDri &&
+            I->getOperand(0).getReg() == CmpReg &&
+            I->getOperand(1).isImm() &&
+            I->getOperand(1).getImm() == 0)
+          IsZeroCompare = true;
+        break;
+      }
+      if (I == MBB.begin())
+        break;
+    }
+    // If CmpReg is not defined within this block, check predecessors.
+    // Accept only the case where every predecessor ends with a unique
+    // LDri CmpReg, 0 def — the classic "ld r, 0 once before a loop" idiom.
+    if (!FoundDefInBlock && !MBB.pred_empty()) {
+      // Check predecessors.  Skip back-edges (Pred == &MBB) since CmpReg
+      // was already verified to be unmodified inside this block — it is
+      // invariant across any back-edge.  Require every non-back-edge
+      // predecessor to define CmpReg as exactly 0.
+      bool AllPredZero = true;
+      bool AnyRealPred = false;
+      for (const MachineBasicBlock *Pred : MBB.predecessors()) {
+        if (Pred == &MBB)
+          continue; // back-edge: CmpReg unchanged in this block → skip
+        AnyRealPred = true;
+        bool FoundInPred = false;
+        for (auto I = Pred->rbegin(); I != Pred->rend(); ++I) {
+          if (I->definesRegister(CmpReg, TRI)) {
+            if (I->getOpcode() == SM83::LDri &&
+                I->getOperand(0).getReg() == CmpReg &&
+                I->getOperand(1).isImm() &&
+                I->getOperand(1).getImm() == 0)
+              FoundInPred = true;
+            break;
+          }
+        }
+        if (!FoundInPred) { AllPredZero = false; break; }
+      }
+      if (AnyRealPred && AllPredZero)
+        IsZeroCompare = true;
+    }
+    if (!IsZeroCompare)
+      return false;
+  } else {
+    return false;
+  }
+
+  // Scan backwards from the CP to verify: there exists a recent F-def whose
+  // tested value equals the value in A at the CP.
+  //
+  // Three shapes emitted by the SM83 codegen:
+  //   (a) <ALU [A,F]>; CPr R(=0): A unchanged since ALU.
+  //   (b) <INC/DEC Rx [F,Rx]>; LD A,Rx; CPr R(=0): A = Rx = F's source.
+  //   (c) <ALU [A,F]>; LD Rx,A; ...; LD A,Rx; CPr R(=0): save/restore of A.
+  //       This is the most common: codegen spills A to a GR8 and then
+  //       reloads for the compare.
+  //
+  // Walk backwards tracking:
+  //   LastALoad: if the most recent A-def was LD A, Rx, this is Rx.
+  //   SavedFromA: if we then see LD Rx, A (where Rx==LastALoad), this flag
+  //               records that Rx was loaded from A — so the F-def defining A
+  //               also set Rx via the save, and shape (c) applies.
+  Register LastALoad;     // Rx in "LD A, Rx" — valid when LastALoadSeen
+  bool LastALoadSeen = false;
+  Register SaveReg;       // Rx in "LD Rx, A" after finding LastALoad
+  bool SaveSeen = false;
+  bool AFlagsFoundBefore = false;
+
+  for (auto I = std::prev(MachineBasicBlock::iterator(MI));; --I) {
+    if (I->definesRegister(SM83::F, TRI)) {
+      if (I->definesRegister(SM83::A, TRI)) {
+        if (!LastALoadSeen) {
+          // Shape (a): ALU set A and F, A unchanged to this CP.
+          AFlagsFoundBefore = true;
+        } else if (SaveSeen && SaveReg == LastALoad) {
+          // Shape (c): ALU set A; LD Rx,A saved it; LD A,Rx restored it.
+          AFlagsFoundBefore = true;
+        }
+      } else if (LastALoadSeen && !SaveSeen) {
+        // Shape (b): F-def set Rx (not A); LD A,Rx followed.
+        // Verify the F-def is indeed the source for LastALoad.
+        if (I->definesRegister(LastALoad, TRI))
+          AFlagsFoundBefore = true;
+      }
+      break;
+    }
+    if (I->definesRegister(SM83::A, TRI)) {
+      // Most recent A-definition going backwards.
+      if (I->getOpcode() == SM83::LDrr &&
+          I->getOperand(0).getReg() == SM83::A) {
+        // LD A, Rx — a simple copy.  Remember Rx.
+        LastALoad = I->getOperand(1).getReg();
+        LastALoadSeen = true;
+        SaveSeen = false; // reset; re-check for LD Rx,A below this point
+      } else {
+        // A is redefined by something other than a simple copy — bail.
+        break;
+      }
+    } else if (LastALoadSeen && !SaveSeen &&
+               I->getOpcode() == SM83::LDrr &&
+               I->getOperand(0).getReg() == LastALoad &&
+               I->getOperand(1).getReg() == SM83::A) {
+      // LD Rx, A — a save of A into the same register we later load from.
+      // This is the "save" step of shape (c).
+      SaveReg = LastALoad;
+      SaveSeen = true;
+    } else if (LastALoadSeen &&
+               I->definesRegister(LastALoad, TRI)) {
+      // LastALoad is clobbered by something other than the save.
+      // The value we're loading into A is not from the F-def's result.
+      LastALoadSeen = false;
+    }
+    if (I == MBB.begin())
+      break;
+  }
+  if (!AFlagsFoundBefore)
+    return false;
+
+  // Walk forward from the CP: every F-consumer before the next F-def must
+  // read only Z (NZ=0 or Z=1), not C (NC=2 or C=3).
+  for (auto I = std::next(MI); I != MBB.end(); ++I) {
+    if (I->definesRegister(SM83::F, TRI))
+      break;
+    if (!I->readsRegister(SM83::F, TRI))
+      continue;
+    unsigned Op = I->getOpcode();
+    if (Op != SM83::JRcc && Op != SM83::JPcc &&
+        Op != SM83::CALLcc && Op != SM83::RETcc)
+      return false;
+    int64_t CC = I->getOperand(0).getImm();
+    if (CC == 2 || CC == 3) // NC or C — reads carry
+      return false;
+  }
+
+  MI = MBB.erase(MI);
   return true;
 }
 

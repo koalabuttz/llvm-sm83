@@ -72,14 +72,23 @@ void SM83FrameLowering::emitEpilogue(MachineFunction &MF,
 
   uint64_t StackSize = MFI.getStackSize();
   if (StackSize != 0) {
-    int64_t Remaining = (int64_t)StackSize;
-    while (Remaining != 0) {
-      int64_t Adj = std::min(Remaining, (int64_t)127);
-      if (Adj == 0)
-        break;
-      BuildMI(MBB, MBBI, DL, TII.get(SM83::ADDSPi))
-          .addImm(Adj);
-      Remaining -= Adj;
+    if (StackSize > 254) {
+      // Large frame: LD HL, n / ADD HL, SP / LD SP, HL (5 bytes fixed).
+      // Cheaper than 3+ ADD SP,imm8 (≥6 bytes) for frames ≥255 bytes.
+      // HL is not callee-saved and is free to clobber in the epilogue.
+      BuildMI(MBB, MBBI, DL, TII.get(SM83::LDrri), SM83::HL)
+          .addImm((int64_t)StackSize);
+      BuildMI(MBB, MBBI, DL, TII.get(SM83::ADDHLsp));
+      BuildMI(MBB, MBBI, DL, TII.get(SM83::LDSPHL));
+    } else {
+      int64_t Remaining = (int64_t)StackSize;
+      while (Remaining != 0) {
+        int64_t Adj = std::min(Remaining, (int64_t)127);
+        if (Adj == 0)
+          break;
+        BuildMI(MBB, MBBI, DL, TII.get(SM83::ADDSPi)).addImm(Adj);
+        Remaining -= Adj;
+      }
     }
   }
 
