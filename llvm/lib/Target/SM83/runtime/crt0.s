@@ -22,6 +22,15 @@ _start:
     ld      sp, _stack_top          ; SP = $DFFF (top of WRAM)
 
     ; -----------------------------------------------------------------------
+    ; 1a. Force MBC1 bank 1 at $4000 for determinism. MBC1 auto-maps bank 1
+    ;     on cold reset, but a soft reset may leave a higher bank selected;
+    ;     writing 1 to $2000 is a no-op on ROM-only carts so this is safe
+    ;     for both cartridge types.
+    ; -----------------------------------------------------------------------
+    ld      a, 1
+    ld      [0x2000], a
+
+    ; -----------------------------------------------------------------------
     ; 2. Zero BSS  (HL = _bss_start, DE = _bss_end - _bss_start, A = 0)
     ; -----------------------------------------------------------------------
     ld      hl, _bss_start

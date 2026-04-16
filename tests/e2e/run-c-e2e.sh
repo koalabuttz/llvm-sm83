@@ -16,6 +16,9 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 CLANG="$BUILD/bin/clang"
 LLD="$BUILD/bin/ld.lld"
+# --no-check-sections: all ROMX banks share VMA $4000-$7FFF (MBC1 overlay
+# semantics). LLD's default VMA-overlap check rejects this; silence it.
+LLDFLAGS="--no-check-sections"
 OBJDUMP="$BUILD/bin/llvm-objdump"
 LINKER_SCRIPT="$LLVM_SRC/sm83.ld"
 CRT0="$BUILD/sm83-crt0.o"
@@ -48,7 +51,7 @@ check "c-test.o has add_three" "'$OBJDUMP' -t '$TMPDIR/c-test.o' 2>&1 | grep -q 
 
 # Step 2: Link
 echo "2. Linking with ld.lld..."
-"$LLD" -T "$LINKER_SCRIPT" "$TMPDIR/c-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" -o "$TMPDIR/c-test.elf"
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/c-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" -o "$TMPDIR/c-test.elf"
 check "c-test.elf created" test -f "$TMPDIR/c-test.elf"
 
 # Step 3: Convert to ROM
@@ -88,7 +91,7 @@ echo ""
 echo "6. Compiling hram-test.c (HRAM section placement)..."
 "$CLANG" --target=sm83-unknown-none -ffreestanding -O1 \
   -c "$SCRIPT_DIR/hram-test.c" -o "$TMPDIR/hram-test.o"
-"$LLD" -T "$LINKER_SCRIPT" "$TMPDIR/hram-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" \
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/hram-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" \
   -o "$TMPDIR/hram-test.elf"
 check "hram-test.elf built" test -f "$TMPDIR/hram-test.elf"
 
@@ -127,7 +130,7 @@ check "c-vblank-test.o has vblank_isr" \
 check "vblank_isr in .isr.vblank section" \
   "'$OBJDUMP' -h '$TMPDIR/c-vblank-test.o' 2>&1 | grep -q '\\.isr\\.vblank'"
 
-"$LLD" -T "$LINKER_SCRIPT" "$TMPDIR/c-vblank-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" \
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/c-vblank-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" \
   -o "$TMPDIR/c-vblank-test.elf"
 check "c-vblank-test.elf built" test -f "$TMPDIR/c-vblank-test.elf"
 
@@ -170,6 +173,103 @@ if [ $HARNESS_RC -eq 0 ]; then
   PASS=$((PASS + 1))
 else
   echo "  FAIL: VBlank integration verification"
+  FAIL=$((FAIL + 1))
+fi
+
+
+# --- MBC1 bank switching test (Item 1) --------------------------------------
+echo ""
+echo "8. Compiling mbc1-test.c (ROM bank 2 access via BANK_SWITCH)..."
+"$CLANG" --target=sm83-unknown-none -ffreestanding -O1 \
+  -c "$SCRIPT_DIR/mbc1-test.c" -o "$TMPDIR/mbc1-test.o"
+check "mbc1-test.o has .romx.bank2 section" \
+  "'$OBJDUMP' -h '$TMPDIR/mbc1-test.o' 2>&1 | grep -q '\\.romx\\.bank2'"
+
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/mbc1-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" \
+  -o "$TMPDIR/mbc1-test.elf"
+check "mbc1-test.elf built" test -f "$TMPDIR/mbc1-test.elf"
+
+# Confirm the payload symbol resolved into the bank-2 VMA window ($4000-$7FFF).
+PAYLOAD_ADDR=$("$BUILD/bin/llvm-nm" "$TMPDIR/mbc1-test.elf" 2>/dev/null \
+  | awk '$3 == "bank2_payload" { print $1 }')
+if [ -n "$PAYLOAD_ADDR" ] && \
+   [ "$((0x$PAYLOAD_ADDR))" -ge $((0x4000)) ] && \
+   [ "$((0x$PAYLOAD_ADDR))" -lt $((0x8000)) ]; then
+  echo "  PASS: bank2_payload at \$$PAYLOAD_ADDR (VMA in \$4000-\$7FFF bank window)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: bank2_payload at '\$$PAYLOAD_ADDR' is not in bank window"
+  FAIL=$((FAIL + 1))
+fi
+
+# Build as MBC1 with 4 banks (64 KB) — bank 2's LMA at $8000 must be in the file.
+python3 "$MAKEROM" "$TMPDIR/mbc1-test.elf" -o "$TMPDIR/mbc1-test.gb" \
+  --mbc1 --rom-banks 4 >/dev/null
+
+# Header checks: $0147 = 0x01 (MBC1), $0148 = 0x01 (4 banks), file is 64 KB.
+MBC_BYTE=$(python3 -c "print('%02x' % open('$TMPDIR/mbc1-test.gb','rb').read()[0x147])")
+ROMSIZE_BYTE=$(python3 -c "print('%02x' % open('$TMPDIR/mbc1-test.gb','rb').read()[0x148])")
+FILESIZE=$(stat -c%s "$TMPDIR/mbc1-test.gb")
+if [ "$MBC_BYTE" = "01" ] && [ "$ROMSIZE_BYTE" = "01" ] && [ "$FILESIZE" -eq 65536 ]; then
+  echo "  PASS: MBC1 header (\$0147=\$01, \$0148=\$01) and 64 KB file"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: MBC1 header got \$0147=\$$MBC_BYTE \$0148=\$$ROMSIZE_BYTE file=$FILESIZE bytes"
+  FAIL=$((FAIL + 1))
+fi
+
+python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/mbc1-test.gb" \
+  --check C100=DE --check C101=AD --check C102=BE --check C103=EF
+HARNESS_RC=$?
+if [ $HARNESS_RC -eq 0 ]; then
+  echo "  PASS: BANK_SWITCH(2) payload copy produced DEADBEEF at \$C100"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: MBC1 bank-2 read did not produce expected payload"
+  FAIL=$((FAIL + 1))
+fi
+
+# --- CGB header + MMIO test (Item 2) ----------------------------------------
+echo ""
+echo "9. Compiling cgb-test.c (CGB MMIO + --cgb-only header)..."
+"$CLANG" --target=sm83-unknown-none -ffreestanding -O1 \
+  -c "$SCRIPT_DIR/cgb-test.c" -o "$TMPDIR/cgb-test.o"
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/cgb-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" \
+  -o "$TMPDIR/cgb-test.elf"
+check "cgb-test.elf built" test -f "$TMPDIR/cgb-test.elf"
+
+python3 "$MAKEROM" "$TMPDIR/cgb-test.elf" -o "$TMPDIR/cgb-test.gb" \
+  --cgb-only >/dev/null
+
+CGB_BYTE=$(python3 -c "print('%02x' % open('$TMPDIR/cgb-test.gb','rb').read()[0x143])")
+if [ "$CGB_BYTE" = "c0" ]; then
+  echo "  PASS: CGB flag \$0143 = \$c0 (CGB-only)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: CGB flag \$0143 got \$$CGB_BYTE (expected \$c0)"
+  FAIL=$((FAIL + 1))
+fi
+
+# Also verify default (no flag) still stamps $0143 = 0x80 and --dmg-only → 0x00.
+python3 "$MAKEROM" "$TMPDIR/cgb-test.elf" -o "$TMPDIR/cgb-test-default.gb" >/dev/null
+python3 "$MAKEROM" "$TMPDIR/cgb-test.elf" -o "$TMPDIR/cgb-test-dmg.gb" --dmg-only >/dev/null
+DEFAULT_BYTE=$(python3 -c "print('%02x' % open('$TMPDIR/cgb-test-default.gb','rb').read()[0x143])")
+DMG_BYTE=$(python3 -c "print('%02x' % open('$TMPDIR/cgb-test-dmg.gb','rb').read()[0x143])")
+if [ "$DEFAULT_BYTE" = "80" ] && [ "$DMG_BYTE" = "00" ]; then
+  echo "  PASS: CGB flag defaults (\$80) and --dmg-only (\$00)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: CGB flag default=\$$DEFAULT_BYTE --dmg-only=\$$DMG_BYTE"
+  FAIL=$((FAIL + 1))
+fi
+
+python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/cgb-test.gb" --check C100=A5
+HARNESS_RC=$?
+if [ $HARNESS_RC -eq 0 ]; then
+  echo "  PASS: CGB MMIO writes did not crash and main ran to completion"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: CGB MMIO test did not halt with sentinel at \$C100"
   FAIL=$((FAIL + 1))
 fi
 

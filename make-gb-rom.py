@@ -24,7 +24,24 @@ NINTENDO_LOGO = bytes([
     0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
 ])
 
-ROM_SIZE = 32768  # 32 KB, no MBC
+ROM_SIZE = 32768  # Default for ROM-only carts. MBC1 expands via --rom-banks.
+
+# Cartridge type byte ($0147).
+CART_ROM_ONLY = 0x00
+CART_MBC1     = 0x01
+
+# CGB flag byte ($0143).
+CGB_DMG_ONLY      = 0x00  # DMG (monochrome) only; CGB boots in compat mode.
+CGB_COMPATIBLE    = 0x80  # Plays on both DMG and CGB.
+CGB_ONLY          = 0xC0  # CGB-exclusive; DMG refuses to boot.
+
+# ROM-size byte ($0148): encodes number of 16 KB banks as log2(banks)-1.
+#   0x00 = 2 banks (32 KB)   0x04 = 32 banks (512 KB)
+#   0x01 = 4 banks (64 KB)   0x05 = 64 banks (1 MB)
+#   0x02 = 8 banks (128 KB)  0x06 = 128 banks (2 MB)
+#   0x03 = 16 banks (256 KB) 0x07 = 256 banks (4 MB)
+ROM_BANK_BYTE = {2: 0x00, 4: 0x01, 8: 0x02, 16: 0x03, 32: 0x04,
+                 64: 0x05, 128: 0x06, 256: 0x07, 512: 0x08}
 
 
 def parse_elf32(data):
@@ -145,26 +162,43 @@ def emit_sym_file(symbols, path):
             f.write(f'00:{addr:04X} {name}\n')
 
 
-def build_rom(elf_data, title="SM83PROG"):
-    """Build a 32KB Game Boy ROM from ELF loadable segments."""
-    rom = bytearray(ROM_SIZE)
+def build_rom(elf_data, title="SM83PROG", mbc=CART_ROM_ONLY, rom_banks=2,
+              cgb_flag=CGB_COMPATIBLE):
+    """Build a Game Boy ROM from ELF loadable segments.
+
+    mbc: cartridge type byte ($0147). Default ROM-only.
+    rom_banks: number of 16 KB banks in the output file. Must be ≥ 2 (one
+      fixed bank 0 + at least one bank 1). 2 = 32 KB ROM-only default.
+    cgb_flag: $0143 byte. CGB_COMPATIBLE (default) keeps existing behaviour.
+    """
+    if rom_banks < 2 or rom_banks not in ROM_BANK_BYTE:
+        raise ValueError(
+            f"Unsupported --rom-banks {rom_banks}; pick one of "
+            f"{sorted(b for b in ROM_BANK_BYTE if b >= 2)}")
+    rom_size = rom_banks * 0x4000
+    # Default-fill banks 1+ with 0xFF (matches every real MBC cart).
+    rom = bytearray(b'\xFF' * rom_size)
+    # Bank 0 is filled with 0x00 by hardware convention; pre-zero it so
+    # the header region stays clean.
+    rom[0:0x4000] = bytearray(0x4000)
 
     segments = parse_elf32(elf_data)
     if not segments:
         raise ValueError("No loadable segments found in ELF")
 
-    # Copy loadable segments into the ROM image.
-    # Only segments with physical addresses in ROM range ($0000-$7FFF) are copied.
+    # Copy loadable segments into the ROM image using paddr (LMA) as the
+    # file offset. Any segment with paddr ≥ rom_size points at WRAM/HRAM
+    # and is initialised at runtime by crt0.
     for seg in segments:
         addr = seg['paddr']
         size = seg['filesz']
-        if addr >= ROM_SIZE:
-            continue  # WRAM/HRAM segment — skip (initialized at runtime)
+        if addr >= rom_size:
+            continue  # WRAM/HRAM segment — skip (initialised at runtime)
         end = addr + size
-        if end > ROM_SIZE:
+        if end > rom_size:
             raise ValueError(
                 f"Segment at ${addr:04X} extends past ROM end "
-                f"(${end:04X} > ${ROM_SIZE:04X})")
+                f"(${end:04X} > ${rom_size:04X}). Increase --rom-banks.")
         rom[addr:addr + size] = seg['data']
 
     # Entry point at $0100: NOP; JP $0150
@@ -180,14 +214,14 @@ def build_rom(elf_data, title="SM83PROG"):
     title_bytes = title.encode('ascii')[:16]
     rom[0x0134:0x0134 + len(title_bytes)] = title_bytes
 
-    # CGB flag at $0143: $80 = CGB-compatible (also plays on DMG)
-    rom[0x0143] = 0x80
+    # CGB flag at $0143: 0x00/0x80/0xC0 per --dmg-only / default / --cgb-only.
+    rom[0x0143] = cgb_flag
 
-    # Cartridge type at $0147: $00 = ROM only (no MBC)
-    rom[0x0147] = 0x00
+    # Cartridge type at $0147: ROM-only or MBC1 per --mbc1.
+    rom[0x0147] = mbc
 
-    # ROM size at $0148: $00 = 32 KB (2 banks)
-    rom[0x0148] = 0x00
+    # ROM size at $0148: log2(banks)-1 form.
+    rom[0x0148] = ROM_BANK_BYTE[rom_banks]
 
     # RAM size at $0149: $00 = no external RAM
     rom[0x0149] = 0x00
@@ -204,9 +238,10 @@ def build_rom(elf_data, title="SM83PROG"):
         hdr_sum = (hdr_sum - b - 1) & 0xFF
     rom[0x014D] = hdr_sum
 
-    # Global checksum at $014E-$014F: sum of all bytes except $014E-$014F
+    # Global checksum at $014E-$014F: sum of all bytes except $014E-$014F,
+    # covering the entire ROM file (all banks).
     glob_sum = 0
-    for i in range(ROM_SIZE):
+    for i in range(rom_size):
         if i == 0x014E or i == 0x014F:
             continue
         glob_sum = (glob_sum + rom[i]) & 0xFFFF
@@ -220,8 +255,10 @@ def check_rom(rom_data):
     """Validate a Game Boy ROM's checksums and structure."""
     errors = []
 
-    if len(rom_data) < ROM_SIZE:
-        errors.append(f"ROM too small: {len(rom_data)} bytes (expected {ROM_SIZE})")
+    if len(rom_data) < 0x8000 or len(rom_data) % 0x4000 != 0:
+        errors.append(
+            f"ROM size {len(rom_data)} bytes is not a valid multiple of "
+            f"16 KB ≥ 32 KB")
         return errors
 
     # Nintendo logo
@@ -270,6 +307,19 @@ def main():
                         help="Validate an existing .gb file's checksums")
     parser.add_argument("--emit-sym", metavar="PATH",
                         help="Also write a BGB/Emulicious-format .sym file")
+    parser.add_argument("--mbc1", action="store_true",
+                        help="Stamp cartridge type $0147 = MBC1 (default: ROM-only)")
+    parser.add_argument("--rom-banks", type=int, default=2,
+                        choices=sorted(b for b in ROM_BANK_BYTE if b >= 2),
+                        help="Number of 16 KB ROM banks (default: 2 = 32 KB)")
+    cgb_group = parser.add_mutually_exclusive_group()
+    cgb_group.add_argument("--cgb-only", action="store_const",
+                           dest="cgb_flag", const=CGB_ONLY,
+                           help="Stamp $0143 = 0xC0 (CGB-exclusive; DMG refuses)")
+    cgb_group.add_argument("--dmg-only", action="store_const",
+                           dest="cgb_flag", const=CGB_DMG_ONLY,
+                           help="Stamp $0143 = 0x00 (DMG/monochrome)")
+    parser.set_defaults(cgb_flag=CGB_COMPATIBLE)
     args = parser.parse_args()
 
     if args.check_only:
@@ -290,7 +340,9 @@ def main():
     with open(args.input, 'rb') as f:
         elf_data = f.read()
 
-    rom = build_rom(elf_data, title=args.title)
+    mbc = CART_MBC1 if args.mbc1 else CART_ROM_ONLY
+    rom = build_rom(elf_data, title=args.title, mbc=mbc,
+                    rom_banks=args.rom_banks, cgb_flag=args.cgb_flag)
 
     with open(args.output, 'wb') as f:
         f.write(rom)

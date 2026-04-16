@@ -20,9 +20,14 @@ import sys
 class SM83Sim:
     def __init__(self, rom_data):
         self.mem = bytearray(0x10000)
-        # Load ROM into $0000-$7FFF
-        rom_len = min(len(rom_data), 0x8000)
-        self.mem[0:rom_len] = rom_data[:rom_len]
+        # Keep the full ROM file in a separate buffer. Bank 0 ($0000-$3FFF)
+        # is always visible; the bank window at $4000-$7FFF reflects
+        # self.rom_bank (writes to $2000-$3FFF update it per MBC1).
+        self.rom = bytes(rom_data)
+        self.rom_bank = 1  # MBC1 default at reset; also matches ROM-only.
+        # Bank 0 into the memory array so reads through self.mem work.
+        bank0_len = min(len(rom_data), 0x4000)
+        self.mem[0:bank0_len] = rom_data[:bank0_len]
 
         # Registers: 8-bit A, B, C, D, E, H, L, F; 16-bit SP, PC
         self.a = self.b = self.c = self.d = self.e = self.h = self.l = 0
@@ -101,6 +106,12 @@ class SM83Sim:
         # Fake hardware registers
         if addr == 0xFF44:  # LY — current scanline
             return 144  # always in VBlank
+        # Bank window $4000-$7FFF reads from self.rom at bank offset.
+        if 0x4000 <= addr < 0x8000:
+            file_off = self.rom_bank * 0x4000 + (addr - 0x4000)
+            if file_off < len(self.rom):
+                return self.rom[file_off]
+            return 0xFF  # unmapped bank region reads as open-bus 0xFF
         return self.mem[addr]
 
     # --- Interrupt dispatch ---
@@ -135,7 +146,15 @@ class SM83Sim:
     def write8(self, addr, val):
         addr &= 0xFFFF
         val &= 0xFF
-        # ROM is read-only ($0000-$7FFF)
+        # MBC1 bank select: $2000-$3FFF writes the low 5 bits of the ROM
+        # bank number. Hardware remaps 0 to 1 (cannot select bank 0 here).
+        if 0x2000 <= addr < 0x4000:
+            bank = val & 0x1F
+            self.rom_bank = bank if bank else 1
+            return
+        # ROM region $0000-$7FFF is otherwise read-only (RAM enable at
+        # $0000-$1FFF and banking-mode at $6000-$7FFF are ignored — this
+        # sim models ROM banking only).
         if addr < 0x8000:
             return
         self.mem[addr] = val

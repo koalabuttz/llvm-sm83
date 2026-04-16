@@ -17,6 +17,9 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 LLC="$BUILD/bin/llc"
 LLD="$BUILD/bin/ld.lld"
+# --no-check-sections: all ROMX banks share VMA $4000-$7FFF (MBC1 overlay
+# semantics). LLD's default VMA-overlap check rejects this; silence it.
+LLDFLAGS="--no-check-sections"
 OBJDUMP="$BUILD/bin/llvm-objdump"
 LINKER_SCRIPT="$LLVM_SRC/sm83.ld"
 CRT0="$BUILD/sm83-crt0.o"
@@ -47,7 +50,7 @@ check "smoke.o has main symbol" "'$OBJDUMP' -t '$TMPDIR/smoke.o' 2>&1 | grep -q 
 
 # Step 2: Link with lld
 echo "2. Linking with ld.lld..."
-"$LLD" -T "$LINKER_SCRIPT" "$TMPDIR/smoke.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" -o "$TMPDIR/smoke.elf"
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/smoke.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" -o "$TMPDIR/smoke.elf"
 check "smoke.elf created" test -f "$TMPDIR/smoke.elf"
 check "ELF has _start symbol" "'$OBJDUMP' -t '$TMPDIR/smoke.elf' 2>&1 | grep -q _start"
 check "ELF has main symbol" "'$OBJDUMP' -t '$TMPDIR/smoke.elf' 2>&1 | grep -q main"

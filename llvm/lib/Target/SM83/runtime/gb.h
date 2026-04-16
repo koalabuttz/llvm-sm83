@@ -51,6 +51,9 @@
 /* --- Wave RAM ($FF30-$FF3F) --------------------------------------------- */
 #define WAVE_RAM  ((volatile unsigned char *)0xFF30)
 
+/* --- CGB speed switch (CGB only) --------------------------------------- */
+#define REG_KEY1  (*(volatile unsigned char *)0xFF4D)  /* Prepare speed switch */
+
 /* --- LCD ---------------------------------------------------------------- */
 #define REG_LCDC  (*(volatile unsigned char *)0xFF40)
 #define REG_STAT  (*(volatile unsigned char *)0xFF41)
@@ -64,6 +67,20 @@
 #define REG_OBP1  (*(volatile unsigned char *)0xFF49)
 #define REG_WY    (*(volatile unsigned char *)0xFF4A)
 #define REG_WX    (*(volatile unsigned char *)0xFF4B)
+
+/* --- CGB graphics (CGB only) ------------------------------------------- */
+#define REG_VBK   (*(volatile unsigned char *)0xFF4F)  /* VRAM bank select */
+#define REG_HDMA1 (*(volatile unsigned char *)0xFF51)  /* HDMA source hi */
+#define REG_HDMA2 (*(volatile unsigned char *)0xFF52)  /* HDMA source lo */
+#define REG_HDMA3 (*(volatile unsigned char *)0xFF53)  /* HDMA dest hi */
+#define REG_HDMA4 (*(volatile unsigned char *)0xFF54)  /* HDMA dest lo */
+#define REG_HDMA5 (*(volatile unsigned char *)0xFF55)  /* HDMA length/mode/start */
+#define REG_RP    (*(volatile unsigned char *)0xFF56)  /* Infrared port */
+#define REG_BCPS  (*(volatile unsigned char *)0xFF68)  /* BG palette index */
+#define REG_BCPD  (*(volatile unsigned char *)0xFF69)  /* BG palette data */
+#define REG_OCPS  (*(volatile unsigned char *)0xFF6A)  /* OBJ palette index */
+#define REG_OCPD  (*(volatile unsigned char *)0xFF6B)  /* OBJ palette data */
+#define REG_SVBK  (*(volatile unsigned char *)0xFF70)  /* WRAM bank select */
 
 /* --- Interrupt enable --------------------------------------------------- */
 #define REG_IE    (*(volatile unsigned char *)0xFFFF)
@@ -172,5 +189,75 @@ typedef struct {
  */
 #define SM83_ISR(vec) \
     __attribute__((interrupt(#vec))) void vec##_isr(void)
+
+/* --- MBC1 bank switching ------------------------------------------------ */
+/*
+ * BANK_SWITCH(n) — map ROM bank `n` into the $4000-$7FFF window.
+ *
+ * MBC1 decodes writes to $2000-$3FFF as the lower 5 bits of the ROM bank
+ * number. Writing 0 is silently remapped by hardware to bank 1, so bank 0
+ * cannot be selected through this register (and doesn't need to be —
+ * bank 0 is permanently mapped at $0000-$3FFF).
+ *
+ * Banks ≥ 32 also need the upper 2 bits written to $4000-$5FFF (mode 0),
+ * which Round 5 does NOT support — callers using --rom-banks > 16 must
+ * write those bits themselves.
+ *
+ * Example:
+ *   extern const unsigned char sprite_tiles[]
+ *       __attribute__((section(".romx.bank2")));
+ *   BANK_SWITCH(2);
+ *   blit(sprite_tiles);          // accessed through $4000
+ *   BANK_SWITCH(1);              // restore default
+ */
+#define BANK_SWITCH(n) do { \
+    *(volatile unsigned char *)0x2000 = (unsigned char)(n); \
+} while (0)
+
+/*
+ * MBC1 SRAM enable/disable. Writing $0A to $0000-$1FFF enables the
+ * A000-$BFFF SRAM region for read/write; any other value (canonically $00)
+ * disables it. Always disable SRAM before power-down to prevent battery-
+ * backed saves from getting corrupted.
+ */
+#define MBC1_RAM_ENABLE()  do { \
+    *(volatile unsigned char *)0x0000 = 0x0A; \
+} while (0)
+
+#define MBC1_RAM_DISABLE() do { \
+    *(volatile unsigned char *)0x0000 = 0x00; \
+} while (0)
+
+/* --- CGB-specific helpers ---------------------------------------------- */
+/*
+ * Select VRAM bank 0 or 1 for access through $8000-$9FFF.
+ * Bank 0: BG + OBJ tile data and tile maps.
+ * Bank 1: extra tile data (CGB) and per-tile BG attribute map.
+ */
+#define VRAM_BANK(n)  do { REG_VBK  = (unsigned char)(n); } while (0)
+
+/*
+ * Select WRAM bank at $D000-$DFFF. Banks 1-7 are available on CGB;
+ * value 0 is silently treated as bank 1 by hardware.
+ * $C000-$CFFF always maps bank 0.
+ */
+#define WRAM_BANK(n)  do { REG_SVBK = (unsigned char)(n); } while (0)
+
+/*
+ * Request CGB double-speed (8 MHz) CPU mode.
+ *
+ * The CGB procedure is:
+ *   1. Disable interrupts and joypad line (write $30 to P1).
+ *   2. Write $01 to KEY1 to arm the switch.
+ *   3. Execute STOP; hardware latches the new speed on resume.
+ *
+ * This helper skips step 1 — caller is responsible for DI + P1 prep,
+ * because wrapping them here would interfere with user interrupt setup.
+ * Tests: check (REG_KEY1 & 0x80) != 0 to confirm double-speed after.
+ */
+#define CGB_DOUBLE_SPEED() do { \
+    REG_KEY1 = 0x01; \
+    __asm__ volatile("stop" ::: "memory"); \
+} while (0)
 
 #endif /* _GB_H */
