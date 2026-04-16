@@ -126,6 +126,7 @@ add_clang_library(clangCodeGen
   TargetBuiltins/NVPTX.cpp
   TargetBuiltins/PPC.cpp
   TargetBuiltins/RISCV.cpp
+  TargetBuiltins/SM83.cpp
   TargetBuiltins/SPIR.cpp
   TargetBuiltins/SystemZ.cpp
   TargetBuiltins/WebAssembly.cpp

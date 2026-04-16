@@ -1083,6 +1083,7 @@ SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   SmallVector<SDValue, 8> Ops;
   Ops.push_back(Chain);
 
+  bool IsIndirectCall = false;
   if (GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee)) {
     Callee = DAG.getTargetGlobalAddress(G->getGlobal(), DL, MVT::i16);
   } else if (ExternalSymbolSDNode *E = dyn_cast<ExternalSymbolSDNode>(Callee)) {
@@ -1098,12 +1099,21 @@ SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     Chain = DAG.getCopyToReg(Chain, DL, SM83::HL, Callee, InGlue);
     InGlue = Chain.getValue(1);
     Callee = DAG.getTargetExternalSymbol("__sm83_icall_hl", MVT::i16);
+    IsIndirectCall = true;
   }
 
   Ops.push_back(Callee);
 
   for (auto &RegToPass : RegsToPass)
     Ops.push_back(DAG.getRegister(RegToPass.first, RegToPass.second.getValueType()));
+
+  // For indirect calls, HL carries the function pointer into the
+  // __sm83_icall_hl trampoline. Declare HL as a live-in register of the
+  // CALL so regalloc keeps the CopyToReg's value live up to this point —
+  // without this, intervening stack/arg-setup code that reuses HL makes
+  // the fn pointer go dead and the trampoline jumps to garbage.
+  if (IsIndirectCall)
+    Ops.push_back(DAG.getRegister(SM83::HL, MVT::i16));
 
   // Add a register mask for call-clobbered registers.
   const TargetRegisterInfo *TRI = Subtarget.getRegisterInfo();

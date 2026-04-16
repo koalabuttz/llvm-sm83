@@ -449,6 +449,34 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# --- Indirect far calls test (Round 8 item 1) ------------------------------
+echo ""
+echo "15. Compiling farcall-indirect-test.c (gb_far_ptr_t + GB_FAR_CALL_*)..."
+"$CLANG" --target=sm83-unknown-none -ffreestanding -O1 \
+  -c "$SCRIPT_DIR/farcall-indirect-test.c" -o "$TMPDIR/farcall-indirect-test.o"
+check "farcall-indirect-test.o has .romx.bank2 section" \
+  "'$OBJDUMP' -h '$TMPDIR/farcall-indirect-test.o' 2>&1 | grep -q '\\.romx\\.bank2'"
+check "farcall-indirect-test.o has .romx.bank3 section" \
+  "'$OBJDUMP' -h '$TMPDIR/farcall-indirect-test.o' 2>&1 | grep -q '\\.romx\\.bank3'"
+
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/farcall-indirect-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" \
+  -o "$TMPDIR/farcall-indirect-test.elf"
+check "farcall-indirect-test.elf built" test -f "$TMPDIR/farcall-indirect-test.elf"
+
+python3 "$MAKEROM" "$TMPDIR/farcall-indirect-test.elf" -o "$TMPDIR/farcall-indirect-test.gb" \
+  --mbc3 --rom-banks 4 >/dev/null
+
+python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/farcall-indirect-test.gb" \
+  --check C100=0B --check C101=28
+HARNESS_RC=$?
+if [ $HARNESS_RC -eq 0 ]; then
+  echo "  PASS: Indirect far calls into bank 2/3 returned \$0B + \$28"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: Indirect far-call results did not match"
+  FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

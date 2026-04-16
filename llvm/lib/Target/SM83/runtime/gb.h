@@ -279,6 +279,140 @@ typedef struct {
 
 #define MBC3_RTC_READ  (*(volatile unsigned char *)0xA000)
 
+/* --- Indirect far calls (Round 8 item 1) --------------------------------- */
+/*
+ * A far function pointer holds a 16-bit address + an 8-bit bank number,
+ * so callers can dispatch indirectly into code placed in a switchable ROM
+ * bank (`__attribute__((section(".romx.bankN")))`). Plain 16-bit function
+ * pointers silently call whatever lives at that VMA in the current bank,
+ * which is wrong for any banked target.
+ *
+ * Build a gb_far_ptr_t with GB_FAR_PTR(fn) — the bank is parsed from the
+ * function's section attribute at compile time by the Clang builtin
+ * __builtin_sm83_bank_of. Store them in tables, pass them around as
+ * values, and dispatch via the GB_FAR_CALL_* family.
+ *
+ * The current dispatchers only support the low 8 bits of the bank
+ * register (banks 1..255). MBC5 banks 256..511 as callees are future
+ * work — the struct has the room, the dispatchers do not yet write
+ * $3000.
+ *
+ * Example:
+ *   __attribute__((section(".romx.bank2")))
+ *   unsigned char handle_a(unsigned char x) { return x + 1; }
+ *
+ *   __attribute__((section(".romx.bank3")))
+ *   unsigned char handle_b(unsigned char x) { return x + 2; }
+ *
+ *   static const gb_far_ptr_t handlers[] = {
+ *       GB_FAR_PTR(handle_a),
+ *       GB_FAR_PTR(handle_b),
+ *   };
+ *
+ *   unsigned char r = GB_FAR_CALL_1_U8_R_U8(handlers[i], input);
+ */
+typedef struct {
+    unsigned char bank;
+    unsigned short addr;
+} gb_far_ptr_t;
+
+#define GB_FAR_PTR(fn) \
+    ((gb_far_ptr_t){ __builtin_sm83_bank_of(&(fn)), \
+                     (unsigned short)&(fn) })
+
+/*
+ * Dispatchers use inline asm with an `"a"`-matched bank (so bank lands
+ * in A at entry and $2000 gets it directly) and separate hi/lo byte
+ * inputs for the target address, loaded into H and L inside the asm.
+ * The clobber list names H and L so the compiler won't place any
+ * input in those registers, guaranteeing the `ld h, %hi` / `ld l, %lo`
+ * sequence doesn't destroy a pending input.
+ *
+ * u8 return values come back via L (the low byte of HL, which holds
+ * the zero-extended i8 under the SM83 ABI). `ld a, l` just before the
+ * bank-restore sequence moves the value into A, which we capture via
+ * a `=a` output constraint.
+ *
+ * DE is callee-saved, so the callee preserves D and E for us. Memory
+ * is clobbered because the callee can touch anything.
+ */
+#define GB_FAR_CALL_V(fp_) do { \
+    gb_far_ptr_t _gbfc_p = (fp_); \
+    unsigned char _gbfc_b = _gbfc_p.bank; \
+    unsigned short _gbfc_a = _gbfc_p.addr; \
+    __asm__ volatile ( \
+        "ld [0x2000], a  \n\t" \
+        "call __sm83_icall_hl \n\t" \
+        "ld a, 1         \n\t" \
+        "ld [0x2000], a" \
+        : "+q"(_gbfc_a) \
+        : "a"(_gbfc_b) \
+        : "b", "c", "memory"); \
+    (void)_gbfc_a; \
+} while (0)
+
+/* Zero-arg, u8 return via L (low byte of HL). */
+#define GB_FAR_CALL_R_U8(fp_) \
+    ({ \
+        gb_far_ptr_t _gbfc_p = (fp_); \
+        unsigned short _gbfc_a = _gbfc_p.addr; \
+        unsigned char _gbfc_ret; \
+        __asm__ volatile ( \
+            "ld [0x2000], a  \n\t" \
+            "call __sm83_icall_hl \n\t" \
+            "ld a, l         \n\t" /* u8 return in L (low byte of HL) */ \
+            "push af         \n\t" \
+            "ld a, 1         \n\t" \
+            "ld [0x2000], a  \n\t" \
+            "pop af" \
+            : "=a"(_gbfc_ret), "+q"(_gbfc_a) \
+            : "0"(_gbfc_p.bank) \
+            : "b", "c", "memory"); \
+        (void)_gbfc_a; \
+        _gbfc_ret; \
+    })
+
+/* One u8 arg, void return. Callee receives arg in A. */
+#define GB_FAR_CALL_1_U8(fp_, arg_) do { \
+    gb_far_ptr_t _gbfc_p = (fp_); \
+    unsigned char _gbfc_b = _gbfc_p.bank; \
+    unsigned short _gbfc_a = _gbfc_p.addr; \
+    unsigned char _gbfc_arg = (unsigned char)(arg_); \
+    __asm__ volatile ( \
+        "ld [0x2000], a  \n\t" \
+        "ld a, %2        \n\t" \
+        "call __sm83_icall_hl \n\t" \
+        "ld a, 1         \n\t" \
+        "ld [0x2000], a" \
+        : "+q"(_gbfc_a) \
+        : "a"(_gbfc_b), "r"(_gbfc_arg) \
+        : "b", "c", "memory"); \
+    (void)_gbfc_a; \
+} while (0)
+
+/* One u8 arg, u8 return. */
+#define GB_FAR_CALL_1_U8_R_U8(fp_, arg_) \
+    ({ \
+        gb_far_ptr_t _gbfc_p = (fp_); \
+        unsigned short _gbfc_a = _gbfc_p.addr; \
+        unsigned char _gbfc_arg = (unsigned char)(arg_); \
+        unsigned char _gbfc_ret; \
+        __asm__ volatile ( \
+            "ld [0x2000], a  \n\t" \
+            "ld a, %3        \n\t" \
+            "call __sm83_icall_hl \n\t" \
+            "ld a, l         \n\t" \
+            "push af         \n\t" \
+            "ld a, 1         \n\t" \
+            "ld [0x2000], a  \n\t" \
+            "pop af" \
+            : "=a"(_gbfc_ret), "+q"(_gbfc_a) \
+            : "0"(_gbfc_p.bank), "r"(_gbfc_arg) \
+            : "b", "c", "memory"); \
+        (void)_gbfc_a; \
+        _gbfc_ret; \
+    })
+
 /* --- CGB-specific helpers ---------------------------------------------- */
 /*
  * Select VRAM bank 0 or 1 for access through $8000-$9FFF.
