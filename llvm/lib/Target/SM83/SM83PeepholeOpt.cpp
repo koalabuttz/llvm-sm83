@@ -18,6 +18,9 @@
 //   5. LD A, r; CP s; LD A, r → LD A, r; CP s (CP doesn't clobber A)
 //   6. <ALU op writing A,F>; CP 0 → remove CP 0 (ALU already set Z)
 //   7. LDrr A, Rx (A dead) → remove (cascades from dead CP elimination)
+//   8. Cross-block dead-load DCE: LD r, imm / LD r, r where the defined
+//      register is not live at the load site — catches stray entry-block
+//      loads (e.g. `ld c, 0`) that the intra-block passes can't see.
 //
 //===----------------------------------------------------------------------===//
 
@@ -26,10 +29,12 @@
 #include "SM83Subtarget.h"
 #include "MCTargetDesc/SM83MCTargetDesc.h"
 
+#include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
+#include "llvm/CodeGen/LiveRegUnits.h"
 
 using namespace llvm;
 
@@ -89,6 +94,13 @@ private:
   /// Tail call: CALL foo; RET → JP foo (saves 1 byte + stack push/pop).
   bool tryTailCall(MachineBasicBlock &MBB,
                    MachineBasicBlock::iterator &MI);
+
+  /// Cross-block DCE: delete LD r, imm / LD r, r whose def register is
+  /// not live at the load site. Walks MBBs in post-order with
+  /// LiveRegUnits so dead loads whose only users live in successor
+  /// blocks (or nowhere) are caught — something the intra-block passes
+  /// above can't see.
+  bool eliminateCrossBlockDeadLoads(MachineFunction &MF);
 };
 
 } // namespace
@@ -108,6 +120,20 @@ bool SM83PeepholeOpt::runOnMachineFunction(MachineFunction &MF) {
       Modified |= optimizeMBB(MBB);
     AnyModified |= Modified;
   } while (Modified);
+
+  // Round 7: cross-block dead-load DCE. Catches stray entry-block loads
+  // (`ld c, 0` in countdown loops) whose dest register is never live.
+  // If anything was deleted, re-run the intra-block passes so newly
+  // exposed patterns (self-copies, dead CPs) cascade.
+  if (eliminateCrossBlockDeadLoads(MF)) {
+    AnyModified = true;
+    bool Changed;
+    do {
+      Changed = false;
+      for (auto &MBB : MF)
+        Changed |= optimizeMBB(MBB);
+    } while (Changed);
+  }
   return AnyModified;
 }
 
@@ -556,15 +582,85 @@ bool SM83PeepholeOpt::tryTailCall(MachineBasicBlock &MBB,
   if (std::next(Next) != MBB.end())
     return false;
 
-  // Replace CALL with JP.
+  // Replace CALL with JP. Copy over the CALL's implicit argument-register
+  // uses (e.g. $a for an i8 arg, $bc for an i16 arg) so that downstream
+  // liveness-aware passes (cross-block DCE) don't see those loads as dead.
   DebugLoc DL = MI->getDebugLoc();
   MachineOperand &Target = MI->getOperand(0);
-  BuildMI(MBB, MI, DL, TII->get(SM83::JP)).add(Target);
+  MachineInstrBuilder MIB = BuildMI(MBB, MI, DL, TII->get(SM83::JP)).add(Target);
+  for (const MachineOperand &MO : MI->operands()) {
+    if (MO.isReg() && MO.isUse())
+      MIB.addReg(MO.getReg(), RegState::Implicit);
+    else if (MO.isRegMask())
+      MIB.addRegMask(MO.getRegMask());
+  }
 
   // Remove the CALL and RET.
   MBB.erase(Next);
   MI = MBB.erase(MI);
   return true;
+}
+
+// Is this a load whose only effect is to define a single GPR?
+// Narrow to LDri (r <- imm8) and LDrr (r <- r'). Both are pure: no memory
+// access, no flag effects, no implicit defs. Safe to delete whenever the
+// destination register is not live.
+static bool isDeadLoadCandidate(const MachineInstr &MI) {
+  unsigned Op = MI.getOpcode();
+  if (Op != SM83::LDri && Op != SM83::LDrr)
+    return false;
+  if (MI.mayLoadOrStore() || MI.hasUnmodeledSideEffects() ||
+      MI.isInlineAsm() || MI.isCall() || MI.isTerminator())
+    return false;
+  if (MI.getNumOperands() < 1 || !MI.getOperand(0).isReg() ||
+      !MI.getOperand(0).isDef())
+    return false;
+  // Reject if the instruction has any implicit defs beyond the dst — the
+  // generic opcode flags above should already filter these, but belt-and-
+  // suspenders since flag-modifying loads would be unsafe to drop.
+  for (const MachineOperand &MO : MI.implicit_operands())
+    if (MO.isReg() && MO.isDef())
+      return false;
+  return true;
+}
+
+bool SM83PeepholeOpt::eliminateCrossBlockDeadLoads(MachineFunction &MF) {
+  bool Modified = false;
+
+  // Post-RA passes sometimes leave conservative MBB live-ins — the register
+  // allocator can mark a reg as live through a block that never actually
+  // reads it. That conservatism hides dead loads across blocks. Recompute
+  // live-ins from scratch before querying liveness so our DCE sees the
+  // true picture.
+  SmallVector<MachineBasicBlock *, 8> Blocks;
+  for (MachineBasicBlock &MBB : MF)
+    Blocks.push_back(&MBB);
+  fullyRecomputeLiveIns(Blocks);
+
+  for (MachineBasicBlock *MBB : post_order(&MF)) {
+    LiveRegUnits Units(*TRI);
+    Units.addLiveOuts(*MBB);
+    // Defer erases to after the reverse walk so iterators stay valid.
+    SmallVector<MachineInstr *, 8> ToErase;
+    for (MachineInstr &MI : reverse(*MBB)) {
+      if (isDeadLoadCandidate(MI)) {
+        Register Dst = MI.getOperand(0).getReg();
+        if (Units.available(Dst)) {
+          // Dst not live — load is dead. Do NOT stepBackward; we're
+          // deleting this instruction so its operands shouldn't
+          // contribute to liveness above it.
+          ToErase.push_back(&MI);
+          continue;
+        }
+      }
+      Units.stepBackward(MI);
+    }
+    for (MachineInstr *MI : ToErase) {
+      MI->eraseFromParent();
+      Modified = true;
+    }
+  }
+  return Modified;
 }
 
 FunctionPass *llvm::createSM83PeepholeOptPass() {
