@@ -422,6 +422,33 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# --- MBC5 high-bank far call test (Round 8 item 3) -------------------------
+echo ""
+echo "14. Compiling farcall-mbc5-highbank-test.c (far call into bank 200)..."
+"$CLANG" --target=sm83-unknown-none -ffreestanding -O1 \
+  -c "$SCRIPT_DIR/farcall-mbc5-highbank-test.c" -o "$TMPDIR/farcall-mbc5-highbank-test.o"
+check "farcall-mbc5-highbank-test.o has .romx.bank200 section" \
+  "'$OBJDUMP' -h '$TMPDIR/farcall-mbc5-highbank-test.o' 2>&1 | grep -q '\\.romx\\.bank200'"
+
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/farcall-mbc5-highbank-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" \
+  -o "$TMPDIR/farcall-mbc5-highbank-test.elf"
+check "farcall-mbc5-highbank-test.elf built" test -f "$TMPDIR/farcall-mbc5-highbank-test.elf"
+
+# MBC5 with 256 banks (4 MB) so bank 200's LMA at $320000 is in-file.
+python3 "$MAKEROM" "$TMPDIR/farcall-mbc5-highbank-test.elf" -o "$TMPDIR/farcall-mbc5-highbank-test.gb" \
+  --mbc5 --rom-banks 256 >/dev/null
+
+python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/farcall-mbc5-highbank-test.gb" \
+  --check C100=CF
+HARNESS_RC=$?
+if [ $HARNESS_RC -eq 0 ]; then
+  echo "  PASS: MBC5 far call into bank 200 returned 7+200 = \$CF"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: MBC5 high-bank far-call result did not match"
+  FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

@@ -949,9 +949,13 @@ SDValue SM83TargetLowering::LowerReturn(
   return DAG.getNode(RetOpc, dl, MVT::Other, RetOps);
 }
 
-// Return the bank number N if `SectionName` is ".romx.bankN" (1..127);
+// Return the bank number N if `SectionName` is ".romx.bankN" (1..511);
 // returns -1 otherwise. Used to detect far-call targets — functions whose
 // section attribute places them in a switchable ROM bank.
+//
+// The cap of 511 covers MBC5's full 9-bit bank register. Banks 1..127 are
+// selected by a single write to $2000; banks 128..511 additionally need the
+// high bit written to $3000 (see LowerCall's far-call prologue).
 static int parseRomxBank(StringRef SectionName) {
   StringRef Prefix = ".romx.bank";
   if (!SectionName.starts_with(Prefix))
@@ -960,7 +964,7 @@ static int parseRomxBank(StringRef SectionName) {
   unsigned N = 0;
   if (NumStr.getAsInteger(10, N))
     return -1;
-  if (N < 1 || N > 127)
+  if (N < 1 || N > 511)
     return -1;
   return static_cast<int>(N);
 }
@@ -1053,10 +1057,19 @@ SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   // target bank. Emits `ld a, N; ld [$2000], a`. The chain ordering
   // guarantees this executes before the CALL; arg-reg copies follow and
   // get glued to the CALL as usual.
+  //
+  // Round 8: for banks 128..511 (MBC5), additionally write the upper bit
+  // to $3000. Only emitted when needed, to keep low-bank calls at the
+  // Round 7 code-size cost.
   if (FarCallBank > 0) {
-    SDValue BankAddr = DAG.getConstant(0x2000, DL, MVT::i16);
-    SDValue BankVal = DAG.getConstant(FarCallBank, DL, MVT::i8);
-    Chain = DAG.getStore(Chain, DL, BankVal, BankAddr, MachinePointerInfo());
+    SDValue BankLowAddr = DAG.getConstant(0x2000, DL, MVT::i16);
+    SDValue BankLowVal = DAG.getConstant(FarCallBank & 0xFF, DL, MVT::i8);
+    Chain = DAG.getStore(Chain, DL, BankLowVal, BankLowAddr, MachinePointerInfo());
+    if (FarCallBank >= 256) {
+      SDValue BankHighAddr = DAG.getConstant(0x3000, DL, MVT::i16);
+      SDValue BankHighVal = DAG.getConstant((FarCallBank >> 8) & 0x01, DL, MVT::i8);
+      Chain = DAG.getStore(Chain, DL, BankHighVal, BankHighAddr, MachinePointerInfo());
+    }
   }
 
   SDValue InGlue;
@@ -1123,10 +1136,18 @@ SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   // Round 7 far-call epilogue: restore bank to 1 (the default). Emits
   // `ld a, 1; ld [$2000], a`. Placed AFTER getCopyFromReg so it reads the
   // return value out of A before A gets clobbered by the immediate load.
+  //
+  // Round 8: if the prologue wrote the MBC5 upper bit (bank >= 256), also
+  // clear $3000 on return so the default bank-1 pager is fully restored.
   if (FarCallBank > 0) {
-    SDValue BankAddr = DAG.getConstant(0x2000, DL, MVT::i16);
-    SDValue BankVal = DAG.getConstant(1, DL, MVT::i8);
-    Chain = DAG.getStore(Chain, DL, BankVal, BankAddr, MachinePointerInfo());
+    SDValue BankLowAddr = DAG.getConstant(0x2000, DL, MVT::i16);
+    SDValue BankLowVal = DAG.getConstant(1, DL, MVT::i8);
+    Chain = DAG.getStore(Chain, DL, BankLowVal, BankLowAddr, MachinePointerInfo());
+    if (FarCallBank >= 256) {
+      SDValue BankHighAddr = DAG.getConstant(0x3000, DL, MVT::i16);
+      SDValue BankHighVal = DAG.getConstant(0, DL, MVT::i8);
+      Chain = DAG.getStore(Chain, DL, BankHighVal, BankHighAddr, MachinePointerInfo());
+    }
   }
 
   return Chain;

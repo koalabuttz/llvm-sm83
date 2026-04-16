@@ -43,10 +43,11 @@ define i8 @test_near(i8 %x) {
 ;===------------------------------------------------------------------------===;
 
 ; CHECK-LABEL: test_far_i8:
-; CHECK-DAG: ld {{.*}}, 8192
-; CHECK: {{(ld \[.*\], 2|ld .*, 2)}}
+; CHECK: ld a, 2
+; CHECK: ld [8192], a
 ; CHECK: call bank2_callee
-; CHECK: {{(ld \[.*\], 1|ld .*, 1)}}
+; CHECK: ld a, 1
+; CHECK: ld [8192], a
 ; CHECK: ret
 define i8 @test_far_i8(i8 %x) {
   %r = call i8 @bank2_callee(i8 %x)
@@ -58,8 +59,11 @@ define i8 @test_far_i8(i8 %x) {
 ;===------------------------------------------------------------------------===;
 
 ; CHECK-LABEL: test_far_void:
-; CHECK-DAG: ld {{.*}}, 8192
+; CHECK: ld a, 3
+; CHECK: ld [8192], a
 ; CHECK: call bank3_void_callee
+; CHECK: ld a, 1
+; CHECK: ld [8192], a
 ; CHECK: ret
 define void @test_far_void() {
   call void @bank3_void_callee()
@@ -76,5 +80,49 @@ define void @test_far_void() {
 ; CHECK: ret
 define i8 @test_far_bank30(i8 %x) {
   %r = call i8 @bank30_callee(i8 %x)
+  ret i8 %r
+}
+
+;===------------------------------------------------------------------------===;
+; Round 8: MBC5 high-bank far call. Bank numbers < 256 only touch $2000
+; (the upper-bit register $3000 is already 0 from reset or from a prior
+; bank-≥256 call's epilogue restore). Banks 128..255 (low 8 bits ≥ 128)
+; prove the linker-script expansion works; banks ≥ 256 additionally
+; touch $3000.
+;===------------------------------------------------------------------------===;
+
+define i8 @bank200_callee(i8 %x) section ".romx.bank200" {
+  %r = add i8 %x, 3
+  ret i8 %r
+}
+
+define i8 @bank300_callee(i8 %x) section ".romx.bank300" {
+  %r = add i8 %x, 4
+  ret i8 %r
+}
+
+; Bank 200 (0xC8 low byte, high bit 0) — single $2000 write.
+; CHECK-LABEL: test_far_bank200:
+; CHECK: ld [8192], a
+; CHECK-NOT: ld [12288],
+; CHECK: call bank200_callee
+; CHECK: ld [8192], a
+; CHECK: ret
+define i8 @test_far_bank200(i8 %x) {
+  %r = call i8 @bank200_callee(i8 %x)
+  ret i8 %r
+}
+
+; Bank 300 (0x12C low byte 0x2C = 44, high bit 1) — writes to both $2000 and $3000.
+; CHECK-LABEL: test_far_bank300:
+; CHECK-DAG: ld {{.*}}, 44
+; CHECK: ld [8192], a
+; CHECK: ld [12288], a
+; CHECK: call bank300_callee
+; CHECK: ld [8192], a
+; CHECK: ld [12288], a
+; CHECK: ret
+define i8 @test_far_bank300(i8 %x) {
+  %r = call i8 @bank300_callee(i8 %x)
   ret i8 %r
 }
