@@ -6,7 +6,7 @@
 // restores bank 1. Linked against sm83-crt0-mbc5.o which writes both
 // registers at startup.
 
-#include "../../llvm/lib/Target/SM83/runtime/gb.h"
+#include <gb.h>
 
 __attribute__((section(".romx.bank3"), used))
 const volatile unsigned char bank3_payload[4] = { 0xC0, 0xFF, 0xEE, 0x42 };

@@ -7,7 +7,7 @@
 //
 // Harness asserts $C100 = 0xA5 (sentinel proving main ran to completion).
 
-#include "../../llvm/lib/Target/SM83/runtime/gb.h"
+#include <gb.h>
 
 void main(void) {
     // Touch CGB-only registers. Without --cgb-only these do nothing on

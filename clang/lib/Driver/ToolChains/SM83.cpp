@@ -10,7 +10,9 @@
 #include "clang/Driver/CommonArgs.h"
 #include "clang/Driver/Compilation.h"
 #include "clang/Driver/InputInfo.h"
+#include "clang/Options/Options.h"
 #include "llvm/Option/ArgList.h"
+#include "llvm/Support/Path.h"
 
 using namespace clang;
 using namespace clang::driver;
@@ -26,6 +28,21 @@ SM83ToolChain::SM83ToolChain(const Driver &D, const llvm::Triple &Triple,
 
 Tool *SM83ToolChain::buildLinker() const {
   return new tools::sm83::Linker(*this);
+}
+
+void SM83ToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
+                                              ArgStringList &CC1Args) const {
+  if (DriverArgs.hasArg(options::OPT_nostdinc) ||
+      DriverArgs.hasArg(options::OPT_nostdlibinc))
+    return;
+
+  // Clang's generic headers (stddef.h, stdint.h, …) live at
+  // <resource-dir>/include; the SM83 shims (string.h, gb.h) sit under
+  // <resource-dir>/include/sm83. Add the SM83 dir with higher precedence so
+  // our freestanding <string.h> is preferred over any accidental host copy.
+  SmallString<128> P(getDriver().ResourceDir);
+  llvm::sys::path::append(P, "include", "sm83");
+  addSystemInclude(DriverArgs, CC1Args, P);
 }
 
 // --- SM83 Linker ---

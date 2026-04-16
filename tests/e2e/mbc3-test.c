@@ -9,7 +9,7 @@
 // is present in the object file. Linked with the standard crt0.o (MBC3
 // shares the $2000 bank register with MBC1, so no crt0 variant needed).
 
-#include "../../llvm/lib/Target/SM83/runtime/gb.h"
+#include <gb.h>
 
 __attribute__((section(".romx.bank5"), used))
 const volatile unsigned char bank5_payload[4] = { 0xDE, 0xAD, 0xBE, 0xEF };

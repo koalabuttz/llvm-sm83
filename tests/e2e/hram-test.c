@@ -11,7 +11,7 @@
  * independently of interrupt handling or runtime copy correctness.
  */
 
-#include "../../llvm/lib/Target/SM83/runtime/gb.h"
+#include <gb.h>
 
 /* Placed in HRAM. Must land in $FF80-$FFFE. */
 void GB_HRAM oam_dma_trampoline(void) {

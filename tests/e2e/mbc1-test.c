@@ -12,7 +12,7 @@
 // Harness asserts $C100-$C103 == DE AD BE EF and the object file
 // still contains a .romx.bank2 section.
 
-#include "../../llvm/lib/Target/SM83/runtime/gb.h"
+#include <gb.h>
 
 __attribute__((section(".romx.bank2"), used))
 const volatile unsigned char bank2_payload[4] = { 0xDE, 0xAD, 0xBE, 0xEF };

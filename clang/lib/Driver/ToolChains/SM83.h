@@ -35,6 +35,10 @@ public:
 
   bool HasNativeLLVMSupport() const override { return true; }
 
+  void
+  AddClangSystemIncludeArgs(const llvm::opt::ArgList &DriverArgs,
+                            llvm::opt::ArgStringList &CC1Args) const override;
+
 protected:
   Tool *buildLinker() const override;
 };

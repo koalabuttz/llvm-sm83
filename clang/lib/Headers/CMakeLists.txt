@@ -358,6 +358,11 @@ set(cuda_wrapper_utility_files
   cuda_wrappers/__utility/declval.h
 )
 
+set(sm83_wrapper_files
+  sm83/string.h
+  sm83/gb.h
+)
+
 set(ppc_wrapper_files
   ppc_wrappers/mmintrin.h
   ppc_wrappers/xmmintrin.h
@@ -456,7 +461,7 @@ endfunction(clang_generate_header)
 foreach( f ${files} ${cuda_wrapper_files} ${cuda_wrapper_bits_files}
            ${cuda_wrapper_utility_files} ${ppc_wrapper_files} ${openmp_wrapper_files}
            ${zos_wrapper_files} ${hlsl_files} ${llvm_libc_wrapper_files}
-           ${llvm_offload_wrapper_files})
+           ${llvm_offload_wrapper_files} ${sm83_wrapper_files})
   copy_header_to_output_dir(${CMAKE_CURRENT_SOURCE_DIR} ${f})
 endforeach( f )
 
@@ -630,6 +635,11 @@ install(
 install(
   FILES ${ppc_wrapper_files}
   DESTINATION ${header_install_dir}/ppc_wrappers
+  COMPONENT clang-resource-headers)
+
+install(
+  FILES ${sm83_wrapper_files}
+  DESTINATION ${header_install_dir}/sm83
   COMPONENT clang-resource-headers)
 
 install(

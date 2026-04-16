@@ -14,7 +14,7 @@
  *   HRAM[$FF80]  < FF  — hram_marker() executed (arbitrary non-FF value)
  */
 
-#include "../../llvm/lib/Target/SM83/runtime/gb.h"
+#include <gb.h>
 
 /* Counter incremented by the VBlank ISR. WRAM-resident, so crt0 zero-inits. */
 static volatile unsigned char vblank_count;
