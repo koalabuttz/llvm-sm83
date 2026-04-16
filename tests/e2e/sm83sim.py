@@ -25,11 +25,16 @@ class SM83Sim:
         # self.rom_bank (writes to $2000-$3FFF update it per the active MBC).
         self.rom = bytes(rom_data)
         self.rom_bank = 1  # MBC1/3 default at reset; also matches ROM-only.
-        # Detect MBC family from header byte $0147. MBC1/MBC3 use a single
-        # register at $2000-$3FFF; MBC3 masks 7 bits, MBC1 masks 5. Both
-        # remap bank 0 → 1.
+        self.rom_bank_low = 1   # MBC5 low 8 bits
+        self.rom_bank_high = 0  # MBC5 bit 8
+        # Detect MBC family from header byte $0147. MBC5 uses two bank
+        # registers ($2000-$2FFF low, $3000-$3FFF bit 8) and permits bank 0
+        # in the window; MBC1/MBC3 use a single register at $2000-$3FFF and
+        # remap bank 0 to 1.
         cart_type = rom_data[0x0147] if len(rom_data) > 0x0147 else 0
-        if 0x0F <= cart_type <= 0x13:
+        if 0x19 <= cart_type <= 0x1E:
+            self.mbc = 'mbc5'
+        elif 0x0F <= cart_type <= 0x13:
             self.mbc = 'mbc3'
         elif 0x01 <= cart_type <= 0x03:
             self.mbc = 'mbc1'
@@ -157,8 +162,18 @@ class SM83Sim:
         addr &= 0xFFFF
         val &= 0xFF
         # MBC bank-register writes: MBC1/3 use a single register at
-        # $2000-$3FFF. Hardware width varies by chip (MBC1=5 bits,
-        # MBC3=7 bits); we use each chip's native mask and remap bank 0 → 1.
+        # $2000-$3FFF; MBC5 splits it into $2000-$2FFF (low 8 bits) and
+        # $3000-$3FFF (bit 8). Hardware width varies by chip (MBC1=5 bits,
+        # MBC3=7 bits, MBC5=9 bits); we use each chip's native mask and
+        # remap bank 0 → 1 on MBC1/3 (not on MBC5).
+        if self.mbc == 'mbc5' and 0x2000 <= addr < 0x3000:
+            self.rom_bank_low = val & 0xFF
+            self.rom_bank = (self.rom_bank_high << 8) | self.rom_bank_low
+            return
+        if self.mbc == 'mbc5' and 0x3000 <= addr < 0x4000:
+            self.rom_bank_high = val & 0x01
+            self.rom_bank = (self.rom_bank_high << 8) | self.rom_bank_low
+            return
         if 0x2000 <= addr < 0x4000:
             mask = 0x7F if self.mbc == 'mbc3' else 0x1F
             bank = val & mask

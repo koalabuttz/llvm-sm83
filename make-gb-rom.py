@@ -30,6 +30,7 @@ ROM_SIZE = 32768  # Default for ROM-only carts. MBC1 expands via --rom-banks.
 CART_ROM_ONLY = 0x00
 CART_MBC1     = 0x01
 CART_MBC3     = 0x13  # MBC3 + RAM + BATTERY (no RTC runtime yet)
+CART_MBC5     = 0x1B  # MBC5 + RAM + BATTERY
 
 # CGB flag byte ($0143).
 CGB_DMG_ONLY      = 0x00  # DMG (monochrome) only; CGB boots in compat mode.
@@ -315,6 +316,9 @@ def main():
     mbc_group.add_argument("--mbc3", action="store_const",
                            dest="mbc", const=CART_MBC3,
                            help="Stamp cartridge type $0147 = MBC3+RAM+BATTERY ($13)")
+    mbc_group.add_argument("--mbc5", action="store_const",
+                           dest="mbc", const=CART_MBC5,
+                           help="Stamp cartridge type $0147 = MBC5+RAM+BATTERY ($1B)")
     parser.set_defaults(mbc=CART_ROM_ONLY)
     parser.add_argument("--rom-banks", type=int, default=2,
                         choices=sorted(b for b in ROM_BANK_BYTE if b >= 2),

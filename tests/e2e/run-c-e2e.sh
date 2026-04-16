@@ -22,6 +22,7 @@ LLDFLAGS="--no-check-sections"
 OBJDUMP="$BUILD/bin/llvm-objdump"
 LINKER_SCRIPT="$LLVM_SRC/sm83.ld"
 CRT0="$BUILD/sm83-crt0.o"
+CRT0_MBC5="$BUILD/sm83-crt0-mbc5.o"
 RUNTIME="$BUILD/sm83-runtime.o"
 RUNTIME_ASM="$BUILD/sm83-runtime-asm.o"
 MAKEROM="$LLVM_SRC/make-gb-rom.py"
@@ -273,9 +274,48 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# --- MBC5 bank switching test (Round 6 item 3) ------------------------------
+echo ""
+echo "10. Compiling mbc5-test.c (ROM bank 3 via MBC5, dual-register crt0)..."
+"$CLANG" --target=sm83-unknown-none -ffreestanding -O1 \
+  -c "$SCRIPT_DIR/mbc5-test.c" -o "$TMPDIR/mbc5-test.o"
+check "mbc5-test.o has .romx.bank3 section" \
+  "'$OBJDUMP' -h '$TMPDIR/mbc5-test.o' 2>&1 | grep -q '\\.romx\\.bank3'"
+
+# Link against the MBC5 crt0 variant (writes both $2000 and $3000 at startup).
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/mbc5-test.o" "$CRT0_MBC5" "$RUNTIME" "$RUNTIME_ASM" \
+  -o "$TMPDIR/mbc5-test.elf"
+check "mbc5-test.elf built (against sm83-crt0-mbc5.o)" test -f "$TMPDIR/mbc5-test.elf"
+
+# 4 banks (64 KB) is enough for bank 3's LMA at $C000.
+python3 "$MAKEROM" "$TMPDIR/mbc5-test.elf" -o "$TMPDIR/mbc5-test.gb" \
+  --mbc5 --rom-banks 4 >/dev/null
+
+MBC_BYTE=$(python3 -c "print('%02x' % open('$TMPDIR/mbc5-test.gb','rb').read()[0x147])")
+ROMSIZE_BYTE=$(python3 -c "print('%02x' % open('$TMPDIR/mbc5-test.gb','rb').read()[0x148])")
+FILESIZE=$(stat -c%s "$TMPDIR/mbc5-test.gb")
+if [ "$MBC_BYTE" = "1b" ] && [ "$ROMSIZE_BYTE" = "01" ] && [ "$FILESIZE" -eq 65536 ]; then
+  echo "  PASS: MBC5 header (\$0147=\$1b, \$0148=\$01) and 64 KB file"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: MBC5 header got \$0147=\$$MBC_BYTE \$0148=\$$ROMSIZE_BYTE file=$FILESIZE bytes"
+  FAIL=$((FAIL + 1))
+fi
+
+python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/mbc5-test.gb" \
+  --check C100=C0 --check C101=FF --check C102=EE --check C103=42
+HARNESS_RC=$?
+if [ $HARNESS_RC -eq 0 ]; then
+  echo "  PASS: MBC5 BANK_SWITCH(3) payload copy produced C0FFEE42 at \$C100"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: MBC5 bank-3 read did not produce expected payload"
+  FAIL=$((FAIL + 1))
+fi
+
 # --- MBC3 bank switching test (Round 6 item 2) ------------------------------
 echo ""
-echo "10. Compiling mbc3-test.c (ROM bank 5 access via BANK_SWITCH, --mbc3)..."
+echo "11. Compiling mbc3-test.c (ROM bank 5 access via BANK_SWITCH, --mbc3)..."
 "$CLANG" --target=sm83-unknown-none -ffreestanding -O1 \
   -c "$SCRIPT_DIR/mbc3-test.c" -o "$TMPDIR/mbc3-test.o"
 check "mbc3-test.o has .romx.bank5 section" \
