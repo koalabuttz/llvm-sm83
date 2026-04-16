@@ -20,12 +20,32 @@ def main():
                         help="Memory assertion: ADDR=VAL (hex)")
     parser.add_argument("--max-steps", type=int, default=500000,
                         help="Maximum CPU steps (default: 500000)")
+    parser.add_argument("--rtc-start", default=None,
+                        help="Initial MBC3 RTC time HH:MM:SS or D:HH:MM:SS "
+                             "(MBC3 carts only; default: all zero)")
     args = parser.parse_args()
 
     with open(args.rom, 'rb') as f:
         rom_data = f.read()
 
     sim = SM83Sim(rom_data)
+
+    if args.rtc_start:
+        parts = args.rtc_start.split(':')
+        if len(parts) == 3:
+            d, (h, m, s) = 0, (int(x) for x in parts)
+        elif len(parts) == 4:
+            d, h, m, s = (int(x) for x in parts)
+        else:
+            print(f"ERROR: --rtc-start must be HH:MM:SS or D:HH:MM:SS",
+                  file=sys.stderr)
+            sys.exit(2)
+        sim.rtc_live_s = s & 0xFF
+        sim.rtc_live_m = m & 0xFF
+        sim.rtc_live_h = h & 0xFF
+        sim.rtc_live_dl = d & 0xFF
+        sim.rtc_live_dh = (d >> 8) & 0x01
+
     halted = sim.run(max_steps=args.max_steps)
 
     if not halted:

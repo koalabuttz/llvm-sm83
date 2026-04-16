@@ -393,6 +393,35 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# --- MBC3 RTC test (Round 7 item 2) ----------------------------------------
+echo ""
+echo "13. Compiling mbc3-rtc-test.c (RTC latch + read all 5 registers)..."
+"$CLANG" --target=sm83-unknown-none -ffreestanding -O1 \
+  -c "$SCRIPT_DIR/mbc3-rtc-test.c" -o "$TMPDIR/mbc3-rtc-test.o"
+check "mbc3-rtc-test.o built" test -f "$TMPDIR/mbc3-rtc-test.o"
+
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/mbc3-rtc-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" \
+  -o "$TMPDIR/mbc3-rtc-test.elf"
+check "mbc3-rtc-test.elf built" test -f "$TMPDIR/mbc3-rtc-test.elf"
+
+python3 "$MAKEROM" "$TMPDIR/mbc3-rtc-test.elf" -o "$TMPDIR/mbc3-rtc-test.gb" \
+  --mbc3 --rom-banks 2 >/dev/null
+
+# Start the RTC at 0 days, 10h, 30m, 5s. The test latches immediately
+# so we expect S=5, M=30, H=10, DL=0, DH=0 (small jitter on S is fine —
+# use an exact check because sim latches within a tiny number of steps).
+python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/mbc3-rtc-test.gb" \
+  --rtc-start 0:10:30:05 \
+  --check C100=05 --check C101=1E --check C102=0A --check C103=00 --check C104=00
+HARNESS_RC=$?
+if [ $HARNESS_RC -eq 0 ]; then
+  echo "  PASS: MBC3 RTC latched + read S=5, M=30 (\$1E), H=10 (\$0A), DL=0, DH=0"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: MBC3 RTC readback did not match start time"
+  FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

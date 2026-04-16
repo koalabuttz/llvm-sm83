@@ -53,6 +53,27 @@ class SM83Sim:
         self.ime = False  # interrupt master enable
         self.steps = 0
 
+        # MBC3 RTC state (Round 7). The RTC has a free-running counter
+        # (_live_*) and a latched snapshot (_latched_*) that reads from
+        # $A000 return. Latching ($00 then $01 to $6000) copies live →
+        # latched. Counters advance once per `rtc_step_divider` sim steps
+        # (default: fast enough that short tests see ≥ 1 tick).
+        self.ram_rtc_enabled = False
+        self.rtc_selected = 0x00   # 0x08..0x0C selects RTC; 0x00..0x03 = SRAM
+        self.rtc_latch_stage = 0   # 0=none, 1=saw $00, waiting for $01
+        self.rtc_live_s = 0
+        self.rtc_live_m = 0
+        self.rtc_live_h = 0
+        self.rtc_live_dl = 0
+        self.rtc_live_dh = 0
+        self.rtc_latched_s = 0
+        self.rtc_latched_m = 0
+        self.rtc_latched_h = 0
+        self.rtc_latched_dl = 0
+        self.rtc_latched_dh = 0
+        self.rtc_step_divider = 1000  # steps per simulated second
+        self._rtc_step_accum = 0
+
     # --- Flag helpers ---
     @property
     def flag_z(self):
@@ -127,6 +148,18 @@ class SM83Sim:
             if file_off < len(self.rom):
                 return self.rom[file_off]
             return 0xFF  # unmapped bank region reads as open-bus 0xFF
+        # $A000-$BFFF: MBC3 RTC registers (when enabled and an RTC reg
+        # is selected). Round 7 doesn't model SRAM banks in this window,
+        # so selector 0x00-0x03 reads fall through to plain mem[].
+        if self.mbc == 'mbc3' and 0xA000 <= addr < 0xC000 \
+                and self.ram_rtc_enabled and 0x08 <= self.rtc_selected <= 0x0C:
+            return {
+                0x08: self.rtc_latched_s,
+                0x09: self.rtc_latched_m,
+                0x0A: self.rtc_latched_h,
+                0x0B: self.rtc_latched_dl,
+                0x0C: self.rtc_latched_dh,
+            }[self.rtc_selected]
         return self.mem[addr]
 
     # --- Interrupt dispatch ---
@@ -161,6 +194,11 @@ class SM83Sim:
     def write8(self, addr, val):
         addr &= 0xFFFF
         val &= 0xFF
+        # RAM/RTC enable register ($0000-$1FFF): $0A enables, any other
+        # value disables. Round 7 uses this state to gate MBC3 RTC reads.
+        if addr < 0x2000:
+            self.ram_rtc_enabled = (val == 0x0A)
+            return
         # MBC bank-register writes: MBC1/3 use a single register at
         # $2000-$3FFF; MBC5 splits it into $2000-$2FFF (low 8 bits) and
         # $3000-$3FFF (bit 8). Hardware width varies by chip (MBC1=5 bits,
@@ -179,9 +217,28 @@ class SM83Sim:
             bank = val & mask
             self.rom_bank = bank if bank else 1
             return
-        # ROM region $0000-$7FFF is otherwise read-only (RAM enable at
-        # $0000-$1FFF and banking-mode at $6000-$7FFF are ignored — this
-        # sim models ROM banking only).
+        # $4000-$5FFF: MBC3 RAM/RTC select. Values 0x00-0x03 = SRAM bank,
+        # 0x08-0x0C = map the corresponding RTC register into $A000-$BFFF.
+        # On MBC1/MBC5 this is a secondary bank register we don't model.
+        if self.mbc == 'mbc3' and 0x4000 <= addr < 0x6000:
+            self.rtc_selected = val & 0x0F
+            return
+        # $6000-$7FFF: MBC3 latch pulse (write $00 then $01). On MBC1 this
+        # is the banking-mode register; ignored.
+        if self.mbc == 'mbc3' and 0x6000 <= addr < 0x8000:
+            if val == 0x00:
+                self.rtc_latch_stage = 1
+            elif val == 0x01 and self.rtc_latch_stage == 1:
+                self.rtc_latched_s  = self.rtc_live_s
+                self.rtc_latched_m  = self.rtc_live_m
+                self.rtc_latched_h  = self.rtc_live_h
+                self.rtc_latched_dl = self.rtc_live_dl
+                self.rtc_latched_dh = self.rtc_live_dh
+                self.rtc_latch_stage = 0
+            else:
+                self.rtc_latch_stage = 0
+            return
+        # ROM region $0000-$7FFF is otherwise read-only.
         if addr < 0x8000:
             return
         self.mem[addr] = val
@@ -715,6 +772,30 @@ class SM83Sim:
                 if vblank_clock >= vblank_period:
                     self.mem[0xFF0F] |= 0x01
                     vblank_clock = 0
+
+            # MBC3 RTC tick (Round 7). Halt bit freezes the counters, matching
+            # real hardware. Cascade s → m → h → dl → dh with 60/60/24/256
+            # wraps; dh bit 7 sticks as the day-carry flag.
+            if self.mbc == 'mbc3' and not (self.rtc_live_dh & 0x40):
+                self._rtc_step_accum += 1
+                if self._rtc_step_accum >= self.rtc_step_divider:
+                    self._rtc_step_accum = 0
+                    self.rtc_live_s = (self.rtc_live_s + 1) & 0xFF
+                    if self.rtc_live_s >= 60:
+                        self.rtc_live_s = 0
+                        self.rtc_live_m = (self.rtc_live_m + 1) & 0xFF
+                        if self.rtc_live_m >= 60:
+                            self.rtc_live_m = 0
+                            self.rtc_live_h = (self.rtc_live_h + 1) & 0xFF
+                            if self.rtc_live_h >= 24:
+                                self.rtc_live_h = 0
+                                self.rtc_live_dl = (self.rtc_live_dl + 1) & 0xFF
+                                if self.rtc_live_dl == 0:
+                                    # Wrap: toggle day-high bit 0; on overflow,
+                                    # sticky-set the carry bit.
+                                    if self.rtc_live_dh & 0x01:
+                                        self.rtc_live_dh |= 0x80
+                                    self.rtc_live_dh ^= 0x01
 
             self._check_interrupts()
 

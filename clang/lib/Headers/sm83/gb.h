@@ -235,6 +235,71 @@ typedef struct {
     *(volatile unsigned char *)0x0000 = 0x00; \
 } while (0)
 
+/* --- MBC3 RTC ---------------------------------------------------------- */
+/*
+ * Real-Time Clock (MBC3 only). The RTC exposes five 8-bit counters through
+ * the same $A000-$BFFF window as SRAM: seconds, minutes, hours, days low,
+ * days high. You access one by (1) enabling SRAM/RTC access, (2) selecting
+ * the desired register into the window, (3) latching current live values
+ * into the readable copies, (4) reading from $A000.
+ *
+ * Usage:
+ *   MBC3_RAM_RTC_ENABLE();      // $0A to $0000
+ *   MBC3_RTC_LATCH();           // snapshot live counters
+ *   MBC3_RTC_SELECT(MBC3_RTC_M);  // want minutes
+ *   unsigned char mins = MBC3_RTC_READ;
+ *   MBC3_RAM_RTC_DISABLE();     // optional; always disable before power-off
+ *
+ * Day-high register bits: bit 0 = day counter MSB, bit 6 = halt, bit 7 =
+ * day-carry (sticky overflow at day 512).
+ */
+#define MBC3_RTC_S       0x08  /* Seconds register select */
+#define MBC3_RTC_M       0x09  /* Minutes */
+#define MBC3_RTC_H       0x0A  /* Hours */
+#define MBC3_RTC_DL      0x0B  /* Days low */
+#define MBC3_RTC_DH      0x0C  /* Days high + halt + carry */
+
+#define MBC3_RTC_DH_HALT  0x40
+#define MBC3_RTC_DH_CARRY 0x80
+
+/*
+ * The MBC register writes below use inline assembly instead of plain
+ * volatile-pointer stores. Why: the SM83 backend currently has a codegen
+ * quirk where `*(volatile u8*)CONST = VAL` can clobber the value when the
+ * allocator routes the imm through H while it's also forming HL for an
+ * indirect store. The inline-asm form (`ld [$addr], a`, 3-byte direct-
+ * addressing opcode) avoids HL entirely and is both correct and smaller
+ * than the compiled sequence. Can revert to plain stores once that
+ * ISel corner is fixed.
+ */
+#define MBC3_RAM_RTC_ENABLE()  do { \
+    __asm__ volatile("ld a, 0x0A \n\t ld [0x0000], a" ::: "a", "memory"); \
+} while (0)
+
+#define MBC3_RAM_RTC_DISABLE() do { \
+    __asm__ volatile("xor a \n\t ld [0x0000], a" ::: "a", "memory"); \
+} while (0)
+
+#define MBC3_RTC_SELECT(reg) do { \
+    __asm__ volatile("ld [0x4000], a" :: "a"((unsigned char)(reg)) : "memory"); \
+} while (0)
+
+/*
+ * Latch pulse: write $00 then $01 to the $6000-$7FFF region. This snapshots
+ * the live counters into the read-visible registers atomically. Must be
+ * called between enabling RTC access and reading.
+ */
+#define MBC3_RTC_LATCH() do { \
+    __asm__ volatile( \
+        "xor a        \n\t" \
+        "ld [0x6000], a \n\t" \
+        "ld a, 1      \n\t" \
+        "ld [0x6000], a" \
+        ::: "a", "memory"); \
+} while (0)
+
+#define MBC3_RTC_READ  (*(volatile unsigned char *)0xA000)
+
 /* --- CGB-specific helpers ---------------------------------------------- */
 /*
  * Select VRAM bank 0 or 1 for access through $8000-$9FFF.
