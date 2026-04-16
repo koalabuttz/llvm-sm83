@@ -14,6 +14,7 @@
 #include "llvm/CodeGen/TargetFrameLowering.h"
 
 #include "SM83.h"
+#include "SM83MachineFunctionInfo.h"
 #include "SM83TargetMachine.h"
 #include "MCTargetDesc/SM83MCTargetDesc.h"
 
@@ -26,6 +27,12 @@ SM83RegisterInfo::SM83RegisterInfo() : SM83GenRegisterInfo(0) {}
 
 const uint16_t *
 SM83RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
+  // Interrupt handlers manually push/pop all registers in prologue/epilogue,
+  // so return an empty callee-saved list to prevent redundant saves.
+  if (MF && MF->getInfo<SM83MachineFunctionInfo>()->isInterruptHandler()) {
+    static const uint16_t EmptyList[] = {0};
+    return EmptyList;
+  }
   return CSR_Normal_SaveList;
 }
 

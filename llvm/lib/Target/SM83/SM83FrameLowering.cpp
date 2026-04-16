@@ -10,6 +10,7 @@
 
 #include "SM83.h"
 #include "SM83InstrInfo.h"
+#include "SM83MachineFunctionInfo.h"
 #include "SM83Subtarget.h"
 
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -31,6 +32,14 @@ void SM83FrameLowering::emitPrologue(MachineFunction &MF,
   const SM83InstrInfo &TII = *STI.getInstrInfo();
   MachineBasicBlock::iterator MBBI = MBB.begin();
   DebugLoc DL;
+
+  // Interrupt handlers: save all registers.
+  if (MF.getInfo<SM83MachineFunctionInfo>()->isInterruptHandler()) {
+    BuildMI(MBB, MBBI, DL, TII.get(SM83::PUSH)).addReg(SM83::AF);
+    BuildMI(MBB, MBBI, DL, TII.get(SM83::PUSH)).addReg(SM83::BC);
+    BuildMI(MBB, MBBI, DL, TII.get(SM83::PUSH)).addReg(SM83::DE);
+    BuildMI(MBB, MBBI, DL, TII.get(SM83::PUSH)).addReg(SM83::HL);
+  }
 
   uint64_t StackSize = MFI.getStackSize();
   if (StackSize == 0)
@@ -62,17 +71,24 @@ void SM83FrameLowering::emitEpilogue(MachineFunction &MF,
     DL = MBBI->getDebugLoc();
 
   uint64_t StackSize = MFI.getStackSize();
-  if (StackSize == 0)
-    return;
+  if (StackSize != 0) {
+    int64_t Remaining = (int64_t)StackSize;
+    while (Remaining != 0) {
+      int64_t Adj = std::min(Remaining, (int64_t)127);
+      if (Adj == 0)
+        break;
+      BuildMI(MBB, MBBI, DL, TII.get(SM83::ADDSPi))
+          .addImm(Adj);
+      Remaining -= Adj;
+    }
+  }
 
-  int64_t Remaining = (int64_t)StackSize;
-  while (Remaining != 0) {
-    int64_t Adj = std::min(Remaining, (int64_t)127);
-    if (Adj == 0)
-      break;
-    BuildMI(MBB, MBBI, DL, TII.get(SM83::ADDSPi))
-        .addImm(Adj);
-    Remaining -= Adj;
+  // Interrupt handlers: restore all registers (reverse order of prologue).
+  if (MF.getInfo<SM83MachineFunctionInfo>()->isInterruptHandler()) {
+    BuildMI(MBB, MBBI, DL, TII.get(SM83::POP), SM83::HL);
+    BuildMI(MBB, MBBI, DL, TII.get(SM83::POP), SM83::DE);
+    BuildMI(MBB, MBBI, DL, TII.get(SM83::POP), SM83::BC);
+    BuildMI(MBB, MBBI, DL, TII.get(SM83::POP), SM83::AF);
   }
 }
 

@@ -33,6 +33,8 @@ def SDT_SM83SelectCC : SDTypeProfile<1, 3, [SDTCisSameAs<0, 1>,
 
 def SM83ret : SDNode<"SM83ISD::RET", SDTNone,
                      [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
+def SM83reti : SDNode<"SM83ISD::RETI", SDTNone,
+                      [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
 
 def SM83callseq_start : SDNode<"ISD::CALLSEQ_START", SDT_SM83CallSeqStart,
                                [SDNPHasChain, SDNPOutGlue]>;
@@ -165,6 +167,19 @@ def STORE_PTR8 : Pseudo<(outs), (ins GPR8:$src, GR16:$ptr),
                         "# STORE_PTR8 [$ptr], $src",
                         [(store i8:$src, GR16:$ptr)]>;
 
+// Load/store i8 through BC or DE only — result/source must be A.
+// Does NOT clobber HL, relieving register pressure on HL-heavy code.
+// Expands to: LDA_BC / LDA_DE / LDBC_A / LDDE_A.
+let mayLoad = 1, hasSideEffects = 0 in
+def LOAD_BCDE_A : Pseudo<(outs Acc:$dst), (ins GR16NoHL:$ptr),
+                         "# LOAD_BCDE_A [$ptr]",
+                         [(set i8:$dst, (load GR16NoHL:$ptr))]>;
+
+let mayStore = 1, hasSideEffects = 0 in
+def STORE_BCDE_A : Pseudo<(outs), (ins Acc:$src, GR16NoHL:$ptr),
+                          "# STORE_BCDE_A [$ptr]",
+                          [(store i8:$src, GR16NoHL:$ptr)]>;
+
 // 16-bit pointer load/store — for `load/store i16, ptr %p`.
 let mayLoad = 1, hasSideEffects = 0, Defs = [HL, A] in
 def LOAD_PTR16 : Pseudo<(outs GR16NoHL:$dst), (ins GR16:$ptr),
@@ -257,11 +272,13 @@ def XOR8rr : Pseudo<(outs GPR8:$dst), (ins GPR8:$src1, GPR8:$src2),
                     [(set i8:$dst, (xor i8:$src1, i8:$src2))]>;
 }
 
-// i16 ADD pseudo — expanded to copy to HL + ADD HL,rr.
-let Defs = [F] in
-def ADD16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
+// i16 ADD pseudo — expanded to copy src1 to HL, then ADD HL,src2.
+// src2 must NOT be HL: the expansion copies src1 to HL first, so if src2
+// were also HL, ADD HL,HL would double instead of adding the two operands.
+let Defs = [HL, F] in
+def ADD16rr : Pseudo<(outs GR16:$dst), (ins GR16:$src1, GR16NoHL:$src2),
                      "# ADD16 $dst, $src1, $src2",
-                     [(set i16:$dst, (add i16:$src1, i16:$src2))]>;
+                     [(set i16:$dst, (add i16:$src1, GR16NoHL:$src2))]>;
 
 // i16 SUB pseudo — expanded to lo/hi byte subtraction.
 let Defs = [F] in
@@ -801,7 +818,8 @@ let isReturn = 1, isTerminator = 1, isBarrier = 1,
 def RET : SM83Inst8<(outs), (ins), "ret",
                     [(SM83ret)]>;
 
-def RETI : SM83Inst8<(outs), (ins), "reti", []>;
+def RETI : SM83Inst8<(outs), (ins), "reti",
+                     [(SM83reti)]>;
 }
 
 // Conditional RET

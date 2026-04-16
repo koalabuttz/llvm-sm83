@@ -66,6 +66,8 @@ private:
   bool expandCMPC8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLOAD_PTR8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandSTORE_PTR8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandLOAD_BCDE_A(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandSTORE_BCDE_A(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLOAD_PTR16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandSTORE_PTR16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLOAD_FI16(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
@@ -128,6 +130,8 @@ bool SM83ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case SM83::STORE_FI16: return expandSTORE_FI16(MBB, MI);
   case SM83::LOAD_PTR8: return expandLOAD_PTR8(MBB, MI);
   case SM83::STORE_PTR8: return expandSTORE_PTR8(MBB, MI);
+  case SM83::LOAD_BCDE_A: return expandLOAD_BCDE_A(MBB, MI);
+  case SM83::STORE_BCDE_A: return expandSTORE_BCDE_A(MBB, MI);
   case SM83::LOAD_PTR16: return expandLOAD_PTR16(MBB, MI);
   case SM83::STORE_PTR16: return expandSTORE_PTR16(MBB, MI);
   case SM83::SEXT8_16: return expandSEXT8_16(MBB, MI);
@@ -414,6 +418,20 @@ bool SM83ExpandPseudo::expandLOAD_PTR8(MachineBasicBlock &MBB,
   Register PtrReg = MI->getOperand(1).getReg();
   const SM83RegisterInfo &RI = TII->getRegisterInfo();
 
+  // Fast path: load to A via BC or DE — no HL copy needed.
+  if (DstReg == SM83::A) {
+    if (PtrReg == SM83::BC) {
+      BuildMI(MBB, MI, DL, TII->get(SM83::LDA_BC));
+      MI->eraseFromParent();
+      return true;
+    }
+    if (PtrReg == SM83::DE) {
+      BuildMI(MBB, MI, DL, TII->get(SM83::LDA_DE));
+      MI->eraseFromParent();
+      return true;
+    }
+  }
+
   // Copy ptr to HL if not already there.
   if (PtrReg != SM83::HL) {
     Register PtrLo = RI.getSubReg(PtrReg, SM83::sub_lo);
@@ -435,6 +453,20 @@ bool SM83ExpandPseudo::expandSTORE_PTR8(MachineBasicBlock &MBB,
   Register PtrReg = MI->getOperand(1).getReg();
   const SM83RegisterInfo &RI = TII->getRegisterInfo();
 
+  // Fast path: store from A via BC or DE — no HL copy needed.
+  if (SrcReg == SM83::A) {
+    if (PtrReg == SM83::BC) {
+      BuildMI(MBB, MI, DL, TII->get(SM83::LDBC_A));
+      MI->eraseFromParent();
+      return true;
+    }
+    if (PtrReg == SM83::DE) {
+      BuildMI(MBB, MI, DL, TII->get(SM83::LDDE_A));
+      MI->eraseFromParent();
+      return true;
+    }
+  }
+
   // Copy ptr to HL if not already there.
   if (PtrReg != SM83::HL) {
     Register PtrLo = RI.getSubReg(PtrReg, SM83::sub_lo);
@@ -444,6 +476,38 @@ bool SM83ExpandPseudo::expandSTORE_PTR8(MachineBasicBlock &MBB,
   }
   // LD (HL), src
   BuildMI(MBB, MI, DL, TII->get(SM83::LDHLr)).addReg(SrcReg);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandLOAD_BCDE_A(MachineBasicBlock &MBB,
+                                          MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register PtrReg = MI->getOperand(1).getReg();
+
+  if (PtrReg == SM83::BC)
+    BuildMI(MBB, MI, DL, TII->get(SM83::LDA_BC));
+  else if (PtrReg == SM83::DE)
+    BuildMI(MBB, MI, DL, TII->get(SM83::LDA_DE));
+  else
+    llvm_unreachable("LOAD_BCDE_A: pointer must be BC or DE");
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandSTORE_BCDE_A(MachineBasicBlock &MBB,
+                                           MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register PtrReg = MI->getOperand(1).getReg();
+
+  if (PtrReg == SM83::BC)
+    BuildMI(MBB, MI, DL, TII->get(SM83::LDBC_A));
+  else if (PtrReg == SM83::DE)
+    BuildMI(MBB, MI, DL, TII->get(SM83::LDDE_A));
+  else
+    llvm_unreachable("STORE_BCDE_A: pointer must be BC or DE");
 
   MI->eraseFromParent();
   return true;

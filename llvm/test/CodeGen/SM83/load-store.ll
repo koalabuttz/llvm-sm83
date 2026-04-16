@@ -42,21 +42,19 @@ define void @store_global_i16(i16 %v) {
   ret void
 }
 
-; Test i8 load via pointer argument.
+; Test i8 load via pointer argument — uses ld a,[bc] (BC/DE indirect).
 define i8 @load_ptr(ptr %p) {
 ; CHECK-LABEL: load_ptr:
-; CHECK:       ld l, c
-; CHECK:       ld h, b
-; CHECK:       ld a, [hl]
+; CHECK:       ld a, [bc]
 ; CHECK:       ret
   %v = load i8, ptr %p
   ret i8 %v
 }
 
-; Test i8 store via pointer argument.
+; Test i8 store via pointer argument — uses ld [bc],a (BC/DE indirect).
 define void @store_ptr(ptr %p, i8 %v) {
 ; CHECK-LABEL: store_ptr:
-; CHECK:       ld [hl], a
+; CHECK:       ld [bc], a
 ; CHECK:       ret
   store i8 %v, ptr %p
   ret void

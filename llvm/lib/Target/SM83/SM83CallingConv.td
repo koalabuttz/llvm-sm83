@@ -21,8 +21,8 @@
 // This allows returning Option<u8>, (u8,u8), and other small aggregates
 // without spilling to the stack.
 def RetCC_SM83 : CallingConv<[
-  CCIfType<[i8],  CCAssignToReg<[A, C, B]>>,
-  CCIfType<[i16], CCAssignToReg<[HL, BC]>>
+  CCIfType<[i8],  CCAssignToReg<[A, C, B, E, D]>>,
+  CCIfType<[i16], CCAssignToReg<[HL, BC, DE]>>
 ]>;
 
 //===----------------------------------------------------------------------===//

@@ -21,6 +21,7 @@ OBJDUMP="$BUILD/bin/llvm-objdump"
 LINKER_SCRIPT="$LLVM_SRC/sm83.ld"
 CRT0="$BUILD/sm83-crt0.o"
 RUNTIME="$BUILD/sm83-runtime.o"
+RUNTIME_ASM="$BUILD/sm83-runtime-asm.o"
 MAKEROM="$LLVM_SRC/make-gb-rom.py"
 
 check() {
@@ -46,7 +47,7 @@ check "smoke.o has main symbol" "'$OBJDUMP' -t '$TMPDIR/smoke.o' 2>&1 | grep -q 
 
 # Step 2: Link with lld
 echo "2. Linking with ld.lld..."
-"$LLD" -T "$LINKER_SCRIPT" "$TMPDIR/smoke.o" "$CRT0" "$RUNTIME" -o "$TMPDIR/smoke.elf"
+"$LLD" -T "$LINKER_SCRIPT" "$TMPDIR/smoke.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" -o "$TMPDIR/smoke.elf"
 check "smoke.elf created" test -f "$TMPDIR/smoke.elf"
 check "ELF has _start symbol" "'$OBJDUMP' -t '$TMPDIR/smoke.elf' 2>&1 | grep -q _start"
 check "ELF has main symbol" "'$OBJDUMP' -t '$TMPDIR/smoke.elf' 2>&1 | grep -q main"

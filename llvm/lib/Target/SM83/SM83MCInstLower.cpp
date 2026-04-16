@@ -36,10 +36,15 @@ void SM83MCInstLower::lowerInstruction(const MachineInstr &MI,
     case MachineOperand::MO_Immediate:
       MCOp = MCOperand::createImm(MO.getImm());
       break;
-    case MachineOperand::MO_GlobalAddress:
-      MCOp = MCOperand::createExpr(MCSymbolRefExpr::create(
-          Printer.getSymbol(MO.getGlobal()), Ctx));
+    case MachineOperand::MO_GlobalAddress: {
+      const MCExpr *Expr = MCSymbolRefExpr::create(
+          Printer.getSymbol(MO.getGlobal()), Ctx);
+      if (int64_t Offset = MO.getOffset())
+        Expr = MCBinaryExpr::createAdd(
+            Expr, MCConstantExpr::create(Offset, Ctx), Ctx);
+      MCOp = MCOperand::createExpr(Expr);
       break;
+    }
     case MachineOperand::MO_ExternalSymbol:
       MCOp = MCOperand::createExpr(MCSymbolRefExpr::create(
           Printer.GetExternalSymbolSymbol(MO.getSymbolName()), Ctx));

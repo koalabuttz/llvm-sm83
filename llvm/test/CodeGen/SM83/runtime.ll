@@ -67,10 +67,11 @@ define i16 @indirect_call_i16(ptr %fn, i16 %arg) {
 ;===------------------------------------------------------------------------===;
 
 ; A 6-byte struct exceeds the 5 i8 register slots; it is passed byval on the
-; stack.  The callee should see a pointer (frame index), not scalar loads.
+; stack.  The callee receives a pointer to the copy and loads through it.
 ;
 ; CHECK-LABEL: byval_callee:
-; CHECK-NOT:   ld a, [bc]
+; CHECK:       ld a, [bc]
+; CHECK:       ret
 define i8 @byval_callee(ptr byval([6 x i8]) align 1 %s) {
   %p = getelementptr [6 x i8], ptr %s, i16 0, i16 0
   %v = load i8, ptr %p

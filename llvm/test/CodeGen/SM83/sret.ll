@@ -9,7 +9,7 @@
 
 define void @sret_store_one(ptr sret(%struct.S) %result) {
 ; CHECK-LABEL: sret_store_one:
-; CHECK: ld [hl],
+; CHECK: ld [bc], a
 ; CHECK: ret
   store i8 42, ptr %result
   ret void
@@ -17,7 +17,7 @@ define void @sret_store_one(ptr sret(%struct.S) %result) {
 
 define void @sret_store_offset(ptr sret(%struct.S) %result) {
 ; CHECK-LABEL: sret_store_offset:
-; CHECK: ld [hl],
+; CHECK: ld [bc], a
 ; CHECK: ret
   %p = getelementptr i8, ptr %result, i16 3
   store i8 99, ptr %p

@@ -12,6 +12,7 @@
 #include "llvm/CodeGen/CodeGenTargetMachineImpl.h"
 #include "llvm/IR/DataLayout.h"
 
+#include "SM83MachineFunctionInfo.h"
 #include "SM83Subtarget.h"
 
 #include <optional>
@@ -34,6 +35,13 @@ public:
   }
 
   TargetPassConfig *createPassConfig(PassManagerBase &PM) override;
+
+  MachineFunctionInfo *
+  createMachineFunctionInfo(BumpPtrAllocator &Allocator, const Function &F,
+                            const TargetSubtargetInfo *STI) const override {
+    return new (Allocator.Allocate<SM83MachineFunctionInfo>())
+        SM83MachineFunctionInfo(F, STI);
+  }
 
 private:
   std::unique_ptr<TargetLoweringObjectFile> TLOF;

@@ -20,6 +20,7 @@ OBJDUMP="$BUILD/bin/llvm-objdump"
 LINKER_SCRIPT="$LLVM_SRC/sm83.ld"
 CRT0="$BUILD/sm83-crt0.o"
 RUNTIME="$BUILD/sm83-runtime.o"
+RUNTIME_ASM="$BUILD/sm83-runtime-asm.o"
 MAKEROM="$LLVM_SRC/make-gb-rom.py"
 
 check() {
@@ -47,7 +48,7 @@ check "c-test.o has add_three" "'$OBJDUMP' -t '$TMPDIR/c-test.o' 2>&1 | grep -q 
 
 # Step 2: Link
 echo "2. Linking with ld.lld..."
-"$LLD" -T "$LINKER_SCRIPT" "$TMPDIR/c-test.o" "$CRT0" "$RUNTIME" -o "$TMPDIR/c-test.elf"
+"$LLD" -T "$LINKER_SCRIPT" "$TMPDIR/c-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" -o "$TMPDIR/c-test.elf"
 check "c-test.elf created" test -f "$TMPDIR/c-test.elf"
 
 # Step 3: Convert to ROM

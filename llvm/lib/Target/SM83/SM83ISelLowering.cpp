@@ -18,6 +18,7 @@
 #include "llvm/Support/ErrorHandling.h"
 
 #include "SM83.h"
+#include "SM83MachineFunctionInfo.h"
 #include "SM83Subtarget.h"
 #include "SM83TargetMachine.h"
 #include "MCTargetDesc/SM83MCTargetDesc.h"
@@ -825,6 +826,7 @@ const char *SM83TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case SM83ISD::CMP16EQ:   return "SM83ISD::CMP16EQ";
   case SM83ISD::SELECT_CC: return "SM83ISD::SELECT_CC";
   case SM83ISD::CMPC16:    return "SM83ISD::CMPC16";
+  case SM83ISD::RETI:      return "SM83ISD::RETI";
   default:                 return nullptr;
   }
 }
@@ -903,6 +905,17 @@ SDValue SM83TargetLowering::LowerFormalArguments(
   return Chain;
 }
 
+bool SM83TargetLowering::CanLowerReturn(
+    CallingConv::ID CallConv, MachineFunction &MF, bool isVarArg,
+    const SmallVectorImpl<ISD::OutputArg> &Outs, LLVMContext &Context,
+    const Type *RetTy) const {
+  // SM83 has 3 i16 return regs (HL, BC, DE) = 6 bytes max.
+  // Returns larger than 6 bytes use sret (hidden pointer).
+  SmallVector<CCValAssign, 16> RVLocs;
+  CCState CCInfo(CallConv, isVarArg, MF, RVLocs, Context);
+  return CCInfo.CheckReturn(Outs, RetCC_SM83);
+}
+
 SDValue SM83TargetLowering::LowerReturn(
     SDValue Chain, CallingConv::ID CallConv, bool isVarArg,
     const SmallVectorImpl<ISD::OutputArg> &Outs,
@@ -927,7 +940,12 @@ SDValue SM83TargetLowering::LowerReturn(
   if (Glue.getNode())
     RetOps.push_back(Glue);
 
-  return DAG.getNode(SM83ISD::RET, dl, MVT::Other, RetOps);
+  // Use RETI for interrupt handlers, RET for normal functions.
+  unsigned RetOpc = SM83ISD::RET;
+  if (MF.getInfo<SM83MachineFunctionInfo>()->isInterruptHandler())
+    RetOpc = SM83ISD::RETI;
+
+  return DAG.getNode(RetOpc, dl, MVT::Other, RetOps);
 }
 
 SDValue
