@@ -14,6 +14,7 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -948,6 +949,22 @@ SDValue SM83TargetLowering::LowerReturn(
   return DAG.getNode(RetOpc, dl, MVT::Other, RetOps);
 }
 
+// Return the bank number N if `SectionName` is ".romx.bankN" (1..127);
+// returns -1 otherwise. Used to detect far-call targets — functions whose
+// section attribute places them in a switchable ROM bank.
+static int parseRomxBank(StringRef SectionName) {
+  StringRef Prefix = ".romx.bank";
+  if (!SectionName.starts_with(Prefix))
+    return -1;
+  StringRef NumStr = SectionName.drop_front(Prefix.size());
+  unsigned N = 0;
+  if (NumStr.getAsInteger(10, N))
+    return -1;
+  if (N < 1 || N > 127)
+    return -1;
+  return static_cast<int>(N);
+}
+
 SDValue
 SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
                               SmallVectorImpl<SDValue> &InVals) const {
@@ -962,6 +979,32 @@ SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   bool isVarArg = CLI.IsVarArg;
 
   MachineFunction &MF = DAG.getMachineFunction();
+
+  // Round 7: detect far calls. If the callee is a direct reference to a
+  // function placed in .romx.bankN, we'll emit an inline BANK_SWITCH(N) /
+  // CALL / BANK_SWITCH(1) sequence around the call.
+  int FarCallBank = -1;
+  if (GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee)) {
+    if (const Function *F = dyn_cast<Function>(G->getGlobal())) {
+      if (F->hasSection())
+        FarCallBank = parseRomxBank(F->getSection());
+    }
+  }
+
+  // Bank-to-bank far calls are not yet supported — the callee must live in
+  // bank 0 (unsectioned). Diagnose at compile time rather than produce
+  // silently broken code (the banked callee's BANK_SWITCH(1) epilogue
+  // would page out its own code mid-execution).
+  if (FarCallBank > 0) {
+    const Function &Caller = MF.getFunction();
+    if (Caller.hasSection() && parseRomxBank(Caller.getSection()) > 0) {
+      DAG.getContext()->diagnose(DiagnosticInfoUnsupported(
+          Caller,
+          "SM83: bank-to-bank far call is not supported (caller in "
+          ".romx.bankN). Only callers in ROM bank 0 may call functions in "
+          ".romx.bankN."));
+    }
+  }
 
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, isVarArg, MF, ArgLocs, *DAG.getContext());
@@ -1004,6 +1047,17 @@ SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 
   if (!MemOpChains.empty())
     Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, MemOpChains);
+
+  // Round 7 far-call prologue: before setting up argument registers (so
+  // this store can't clobber any arg-carrying register), page in the
+  // target bank. Emits `ld a, N; ld [$2000], a`. The chain ordering
+  // guarantees this executes before the CALL; arg-reg copies follow and
+  // get glued to the CALL as usual.
+  if (FarCallBank > 0) {
+    SDValue BankAddr = DAG.getConstant(0x2000, DL, MVT::i16);
+    SDValue BankVal = DAG.getConstant(FarCallBank, DL, MVT::i8);
+    Chain = DAG.getStore(Chain, DL, BankVal, BankAddr, MachinePointerInfo());
+  }
 
   SDValue InGlue;
   for (auto &RegToPass : RegsToPass) {
@@ -1064,6 +1118,15 @@ SM83TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     InVals.push_back(Val.getValue(0));
     Chain  = Val.getValue(1);
     InGlue = Val.getValue(2);
+  }
+
+  // Round 7 far-call epilogue: restore bank to 1 (the default). Emits
+  // `ld a, 1; ld [$2000], a`. Placed AFTER getCopyFromReg so it reads the
+  // return value out of A before A gets clobbered by the immediate load.
+  if (FarCallBank > 0) {
+    SDValue BankAddr = DAG.getConstant(0x2000, DL, MVT::i16);
+    SDValue BankVal = DAG.getConstant(1, DL, MVT::i8);
+    Chain = DAG.getStore(Chain, DL, BankVal, BankAddr, MachinePointerInfo());
   }
 
   return Chain;

@@ -351,6 +351,48 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# --- Far-call test (Round 7 item 1) ----------------------------------------
+echo ""
+echo "12. Compiling farcall-test.c (inline far calls to bank 2 + bank 30)..."
+"$CLANG" --target=sm83-unknown-none -ffreestanding -O1 \
+  -c "$SCRIPT_DIR/farcall-test.c" -o "$TMPDIR/farcall-test.o"
+check "farcall-test.o has .romx.bank2 section" \
+  "'$OBJDUMP' -h '$TMPDIR/farcall-test.o' 2>&1 | grep -q '\\.romx\\.bank2'"
+check "farcall-test.o has .romx.bank30 section" \
+  "'$OBJDUMP' -h '$TMPDIR/farcall-test.o' 2>&1 | grep -q '\\.romx\\.bank30'"
+
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/farcall-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" \
+  -o "$TMPDIR/farcall-test.elf"
+check "farcall-test.elf built" test -f "$TMPDIR/farcall-test.elf"
+
+# MBC3 with 32 banks (512 KB) so bank 30's LMA at $78000 is in-file.
+python3 "$MAKEROM" "$TMPDIR/farcall-test.elf" -o "$TMPDIR/farcall-test.gb" \
+  --mbc3 --rom-banks 32 >/dev/null
+
+# Confirm bank-30 callee lives in the bank window ($4000-$7FFF VMA).
+CALLEE30_ADDR=$("$BUILD/bin/llvm-nm" "$TMPDIR/farcall-test.elf" 2>/dev/null \
+  | awk '$3 == "add_hundred" { print $1 }')
+if [ -n "$CALLEE30_ADDR" ] && \
+   [ "$((0x$CALLEE30_ADDR))" -ge $((0x4000)) ] && \
+   [ "$((0x$CALLEE30_ADDR))" -lt $((0x8000)) ]; then
+  echo "  PASS: add_hundred at \$$CALLEE30_ADDR (bank window VMA)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: add_hundred at '\$$CALLEE30_ADDR' is outside bank window"
+  FAIL=$((FAIL + 1))
+fi
+
+python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/farcall-test.gb" \
+  --check C100=37 --check C101=69
+HARNESS_RC=$?
+if [ $HARNESS_RC -eq 0 ]; then
+  echo "  PASS: Far calls to banks 2 and 30 returned correct results (\$37 + \$69)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: Far-call results at \$C100 did not match expected"
+  FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
