@@ -103,6 +103,35 @@ class SM83Sim:
             return 144  # always in VBlank
         return self.mem[addr]
 
+    # --- Interrupt dispatch ---
+    #
+    # Minimal model: IF ($FF0F) and IE ($FFFF) live in self.mem like any
+    # other RAM (writes go through write8, reads through read8). VBlank is
+    # periodically raised by run() via vblank_period. Other interrupt
+    # sources (LCD/Timer/Serial/Joypad) can be raised by tests writing to
+    # $FF0F directly.
+    def _check_interrupts(self):
+        """Handle pending interrupts. Returns True if state changed."""
+        pending = self.mem[0xFF0F] & self.mem[0xFFFF] & 0x1F
+        if not pending:
+            return False
+        if self.ime:
+            # Dispatch to the lowest-numbered pending vector.
+            # Bit 0=VBlank ($40), 1=LCD ($48), 2=Timer ($50),
+            # 3=Serial ($58), 4=Joypad ($60).
+            bit = (pending & -pending).bit_length() - 1
+            self.mem[0xFF0F] = self.mem[0xFF0F] & ~(1 << bit) & 0xFF
+            self.ime = False
+            self.halted = False
+            self.push16(self.pc)
+            self.pc = 0x40 + bit * 8
+            return True
+        if self.halted:
+            # IME off but pending interrupt still wakes HALT.
+            self.halted = False
+            return True
+        return False
+
     def write8(self, addr, val):
         addr &= 0xFFFF
         val &= 0xFF
@@ -620,9 +649,43 @@ class SM83Sim:
         elif group == 3:  # SET
             self._set_r8(r, val | (1 << bit))
 
-    def run(self, max_steps=500000):
-        """Run until HALT or step limit."""
+    def run(self, max_steps=500000, vblank_period=5000):
+        """Run until deterministic halt or step limit.
+
+        vblank_period: simulated CPU steps between VBlank triggers. Set to
+        0 or None to disable VBlank simulation (matches pre-interrupt
+        behaviour for tests that don't care).
+
+        Termination:
+          - HALT with IME=0 or IE=0: program is done, returns True.
+          - Pending interrupt with IME=1: dispatches to the vector.
+          - Pending interrupt with HALT+IME=0: unhalts and continues.
+          - Step limit exceeded: returns False.
+        """
+        vblank_clock = 0
         while self.steps < max_steps:
+            if vblank_period:
+                vblank_clock += 1
+                if vblank_clock >= vblank_period:
+                    self.mem[0xFF0F] |= 0x01
+                    vblank_clock = 0
+
+            self._check_interrupts()
+
+            if self.halted:
+                # No pending interrupt, IME off, or IE=0 — permanent halt.
+                if not self.ime or (self.mem[0xFFFF] & 0x1F) == 0:
+                    return True
+                # Otherwise burn a cycle waiting for the next VBlank raise.
+                # Must bump `steps` so max_steps still terminates us if
+                # vblank_period is 0 or the ISR never re-enables IME.
+                self.steps += 1
+                continue
+
             if not self.step():
-                return True  # halted normally
+                # step() reported halt/infinite-loop. Re-evaluate whether
+                # further interrupts could wake us.
+                if not self.ime or (self.mem[0xFFFF] & 0x1F) == 0:
+                    return True
+
         return False  # hit step limit

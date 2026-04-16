@@ -482,6 +482,7 @@ def TargetLoongArch : TargetArch<["loongarch32", "loongarch64"]>;
 def TargetMips32 : TargetArch<["mips", "mipsel"]>;
 def TargetAnyMips : TargetArch<["mips", "mipsel", "mips64", "mips64el"]>;
 def TargetMSP430 : TargetArch<["msp430"]>;
+def TargetSM83 : TargetArch<["sm83"]>;
 def TargetM68k : TargetArch<["m68k"]>;
 def TargetRISCV : TargetArch<["riscv32", "riscv64", "riscv32be", "riscv64be"]>;
 def TargetX86 : TargetArch<["x86"]>;
@@ -1085,6 +1086,21 @@ def AVRSignal : InheritableAttr, TargetSpecificAttr<TargetAVR> {
   let Spellings = [GCC<"signal">];
   let Subjects = SubjectList<[Function]>;
   let Documentation = [AVRSignalDocs];
+}
+
+def SM83Interrupt : InheritableAttr, TargetSpecificAttr<TargetSM83> {
+  // NOTE: Shares the "interrupt" spelling with every other target's
+  // interrupt attribute. See handleInterruptAttr in SemaDeclAttr.cpp.
+  let Spellings = [GCC<"interrupt">];
+  let Subjects = SubjectList<[Function]>;
+  // Optional vector name. Empty string = generic interrupt (no section override).
+  // Valid non-empty values: vblank, lcd, timer, serial, joypad.
+  let Args = [EnumArgument<"Vector", "VectorKind", /*is_string=*/true,
+                           ["vblank", "lcd", "timer", "serial", "joypad", ""],
+                           ["VBlank", "LCD", "Timer", "Serial", "Joypad",
+                            "Generic"]>];
+  let ParseKind = "Interrupt";
+  let Documentation = [SM83InterruptDocs];
 }
 
 def AsmLabel : InheritableAttr {

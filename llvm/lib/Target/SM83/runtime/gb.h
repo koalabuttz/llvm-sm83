@@ -135,4 +135,42 @@ typedef struct {
 #define OAM_FLIP_X    0x20  /* Horizontal flip */
 #define OAM_PALETTE   0x10  /* OBJ palette: 0=OBP0, 1=OBP1 */
 
+/* --- Section placement helpers ------------------------------------------ */
+/*
+ * Place a function or data in HRAM ($FF80-$FFFE).
+ *
+ * HRAM is the only region accessible during OAM DMA ($FF46 write), so the
+ * OAM DMA trampoline MUST use GB_HRAM. The linker stores the contents in
+ * ROM and the crt0 copies them to HRAM at startup.
+ *
+ * Example:
+ *   static void GB_HRAM oam_dma_wait(void) {
+ *       REG_DMA = 0xC1;
+ *       for (unsigned char i = 0; i < 40; i++) __asm__("nop");
+ *   }
+ */
+#define GB_HRAM __attribute__((section(".hram"), noinline))
+
+/*
+ * Place a data object in HRAM as uninitialised storage.
+ * (Currently routes through the same loaded .hram section; acceptable for
+ * small scratch variables. Extend the linker script with .hram.bss if a
+ * zero-init distinction is required.)
+ */
+#define GB_HRAM_DATA __attribute__((section(".hram")))
+
+/*
+ * Declare an interrupt service routine pinned to a hardware vector.
+ *
+ * `vec` must be one of: vblank, lcd, timer, serial, joypad.
+ * The compiler emits the full register-preserving prologue, uses RETI, and
+ * places the function in .isr.<vec> which the linker script maps to
+ * address $40/$48/$50/$58/$60 respectively.
+ *
+ * Example:
+ *   SM83_ISR(vblank) { vblank_count++; }
+ */
+#define SM83_ISR(vec) \
+    __attribute__((interrupt(#vec))) void vec##_isr(void)
+
 #endif /* _GB_H */

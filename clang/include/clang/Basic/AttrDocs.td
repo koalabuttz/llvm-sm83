@@ -3185,6 +3185,27 @@ Interrupt handler functions defined with the signal attribute do not re-enable i
 }];
 }
 
+def SM83InterruptDocs : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "interrupt (SM83)";
+  let Content = [{
+Clang supports the GNU style ``__attribute__((interrupt))`` attribute on
+SM83 (Game Boy / Game Boy Color) targets. This attribute may be attached to a
+function definition and instructs the backend to generate a full
+register-preserving prologue (push AF/BC/DE/HL) and emit ``RETI`` instead of
+``RET``.
+
+The attribute optionally takes a vector name as a string argument:
+``__attribute__((interrupt("vblank")))``. When a vector name is supplied, the
+function is automatically placed into the matching linker-script section
+(``.isr.vblank``, ``.isr.lcd``, ``.isr.timer``, ``.isr.serial``, or
+``.isr.joypad``), which pins the handler to the hardware interrupt vector
+address ($40, $48, $50, $58, or $60 respectively). Without a vector name, the
+interrupt prologue is still emitted but the function is placed in ``.text``
+like any other function.
+}];
+}
+
 def TargetDocs : Documentation {
   let Category = DocCatFunction;
   let Content = [{

@@ -26,14 +26,14 @@ _start:
     ; -----------------------------------------------------------------------
     ld      hl, _bss_start
     ld      bc, _bss_end
-    ; Compute length = _bss_end - _bss_start into DE
-    ld      d, b
-    ld      e, c
-    ld      a, l
-    sub     e
+    ; Compute DE = BC - HL (= _bss_end - _bss_start). Previous version
+    ; computed HL - BC, which wrapped to a huge count whenever BSS was
+    ; non-empty and clobbered all of RAM. Exposed by c-vblank-test.c.
+    ld      a, c
+    sub     l
     ld      e, a
-    ld      a, h
-    sbc     a, d
+    ld      a, b
+    sbc     a, h
     ld      d, a                    ; DE = _bss_end - _bss_start (may be 0)
     ld      a, d
     or      e
@@ -75,6 +75,34 @@ _start:
 .Ldata_done:
 
     ; -----------------------------------------------------------------------
+    ; 3b. Copy HRAM image from ROM (_hram_load) to HRAM (_hram_start).
+    ;     Used for the OAM DMA trampoline and any user functions/data
+    ;     tagged with __attribute__((section(".hram"))).
+    ;     HL = _hram_load (source), DE = _hram_start (dest), BC = length.
+    ; -----------------------------------------------------------------------
+    ld      hl, _hram_load
+    ld      de, _hram_start
+    ld      bc, _hram_end
+    ld      a, c
+    sub     e
+    ld      c, a
+    ld      a, b
+    sbc     a, d
+    ld      b, a                    ; BC = _hram_end - _hram_start
+    ld      a, b
+    or      c
+    jr      z, .Lhram_done
+.Lhram_loop:
+    ld      a, [hl+]
+    ld      [de], a
+    inc     de
+    dec     bc
+    ld      a, b
+    or      c
+    jr      nz, .Lhram_loop
+.Lhram_done:
+
+    ; -----------------------------------------------------------------------
     ; 4. Enable VBlank interrupt and global interrupts, then call main().
     ; -----------------------------------------------------------------------
     ld      a, 0x01                 ; IE_VBLANK
@@ -84,7 +112,12 @@ _start:
 
     ; -----------------------------------------------------------------------
     ; 5. Halt forever if main() returns.
+    ;    DI first so a pending interrupt can't re-enter the ISR after main
+    ;    has cleaned up; this also guarantees deterministic termination for
+    ;    headless test harnesses (sm83sim.py ends when HALT is entered with
+    ;    IME=0 or IE=0).
     ; -----------------------------------------------------------------------
+    di
 .Lhalt_loop:
     halt
     nop

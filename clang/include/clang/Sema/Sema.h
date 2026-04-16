@@ -170,6 +170,7 @@ class SemaLoongArch;
 class SemaM68k;
 class SemaMIPS;
 class SemaMSP430;
+class SemaSM83;
 class SemaNVPTX;
 class SemaObjC;
 class SemaOpenACC;
@@ -1510,6 +1511,11 @@ public:
     return *MSP430Ptr;
   }
 
+  SemaSM83 &SM83() {
+    assert(SM83Ptr);
+    return *SM83Ptr;
+  }
+
   SemaNVPTX &NVPTX() {
     assert(NVPTXPtr);
     return *NVPTXPtr;
@@ -1625,6 +1631,7 @@ private:
   std::unique_ptr<SemaM68k> M68kPtr;
   std::unique_ptr<SemaMIPS> MIPSPtr;
   std::unique_ptr<SemaMSP430> MSP430Ptr;
+  std::unique_ptr<SemaSM83> SM83Ptr;
   std::unique_ptr<SemaNVPTX> NVPTXPtr;
   std::unique_ptr<SemaObjC> ObjCPtr;
   std::unique_ptr<SemaOpenACC> OpenACCPtr;

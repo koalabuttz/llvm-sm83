@@ -35,15 +35,29 @@ SECTIONS {
     } > ROM
 
     /*
-     * Interrupt service routine stubs.
-     * Hardware jumps to these fixed addresses on interrupt.
-     * Each slot is 8 bytes; user code should place an ISR body or RETI stub.
+     * Interrupt vector dispatch table at $0040-$0067.
+     *
+     * Each 8-byte slot holds a 3-byte `JP <handler>` trampoline, NOP-padded
+     * to 8 bytes so the next vector lands at the correct fixed address.
+     * The handler bodies themselves live in .text (see the KEEP(*(.isr.*))
+     * lines below). Vectors whose handler is not defined resolve to
+     * _default_isr_stub (a single RETI byte) via the PROVIDE lines further
+     * down.
+     *
+     * Opcode reference: 0xC3 = JP nn (3 bytes, little-endian target).
      */
-    .isr.vblank 0x0040 : { KEEP(*(.isr.vblank)) . = 0x0048; } > ROM
-    .isr.lcd    0x0048 : { KEEP(*(.isr.lcd))    . = 0x0050; } > ROM
-    .isr.timer  0x0050 : { KEEP(*(.isr.timer))  . = 0x0058; } > ROM
-    .isr.serial 0x0058 : { KEEP(*(.isr.serial)) . = 0x0060; } > ROM
-    .isr.joypad 0x0060 : { KEEP(*(.isr.joypad)) . = 0x0068; } > ROM
+    .isr_dispatch 0x0040 : {
+        BYTE(0xC3); SHORT(vblank_isr);
+        BYTE(0); BYTE(0); BYTE(0); BYTE(0); BYTE(0);   /* pad to 8 bytes */
+        BYTE(0xC3); SHORT(lcd_isr);
+        BYTE(0); BYTE(0); BYTE(0); BYTE(0); BYTE(0);
+        BYTE(0xC3); SHORT(timer_isr);
+        BYTE(0); BYTE(0); BYTE(0); BYTE(0); BYTE(0);
+        BYTE(0xC3); SHORT(serial_isr);
+        BYTE(0); BYTE(0); BYTE(0); BYTE(0); BYTE(0);
+        BYTE(0xC3); SHORT(joypad_isr);
+        BYTE(0); BYTE(0); BYTE(0); BYTE(0); BYTE(0);
+    } > ROM
 
     /*
      * Entry point at $0100–$0103.
@@ -62,13 +76,36 @@ SECTIONS {
     .text 0x0150 : {
         KEEP(*(.text._start))
         KEEP(*(.text.icall_hl))   /* jp hl trampoline — __sm83_icall_hl */
+        /* ISR handler bodies. The dispatch table at $0040-$0067 JPs here.
+         * Each KEEP'd because interrupt handlers have no static call site
+         * (hardware-invoked through the dispatch table). */
+        KEEP(*(.isr.vblank))
+        KEEP(*(.isr.lcd))
+        KEEP(*(.isr.timer))
+        KEEP(*(.isr.serial))
+        KEEP(*(.isr.joypad))
         *(.text*)
         *(.rodata*)
         *(.rodata)
         . = ALIGN(2);
+        /* Default handler for vectors with no user-defined ISR. */
+        _default_isr_stub = .;
+        BYTE(0xD9);   /* RETI */
+        . = ALIGN(2);
         _rom_end = .;
     } > ROM
     ASSERT(_rom_end <= 0x8000, "ROM bank 0 overflow: code+data exceeds 32 KB")
+
+    /*
+     * Default any undefined ISR vectors to the RETI stub. PROVIDE creates
+     * these symbols only if they were not already defined (i.e. the user
+     * did not write __attribute__((interrupt("<name>")))).
+     */
+    PROVIDE(vblank_isr = _default_isr_stub);
+    PROVIDE(lcd_isr    = _default_isr_stub);
+    PROVIDE(timer_isr  = _default_isr_stub);
+    PROVIDE(serial_isr = _default_isr_stub);
+    PROVIDE(joypad_isr = _default_isr_stub);
 
     /*
      * Initialised data: stored in ROM, copied to WRAM at startup by _start.
@@ -101,11 +138,25 @@ SECTIONS {
     PROVIDE(_stack_top = ORIGIN(WRAM) + LENGTH(WRAM) - 1);
 
     /*
-     * HRAM — small scratch area above the stack, useful for DMA wait loops.
+     * HRAM — 127 bytes of fast memory at $FF80-$FFFE.
+     *
+     * Code in HRAM executes normally even while OAM DMA is transferring
+     * ($FF46 write), so the OAM DMA trampoline MUST live here; during the
+     * transfer the CPU cannot fetch from ROM or WRAM.
+     *
+     * Contents are stored in ROM and copied to HRAM by _start at boot
+     * (analogous to .data → WRAM). Mark uninitialised HRAM with a distinct
+     * section if needed (currently unused; add .hram.bss as NOLOAD if
+     * required in the future).
      */
-    .hram (NOLOAD) : {
+    .hram 0xFF80 : {
+        _hram_start = .;
         *(.hram*)
-    } > HRAM
+        . = ALIGN(2);
+        _hram_end = .;
+    } > HRAM AT > ROM
+    _hram_load = LOADADDR(.hram);
+    ASSERT(_hram_end <= 0xFFFF, "HRAM overflow: exceeds 127 bytes at $FF80")
 
     /* Discard debug and exception-handling sections. */
     /DISCARD/ : {

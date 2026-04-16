@@ -139,6 +139,9 @@ createTargetCodeGenInfo(CodeGenModule &CGM) {
     return createAVRTargetCodeGenInfo(CGM, NPR, NRR);
   }
 
+  case llvm::Triple::sm83:
+    return createSM83TargetCodeGenInfo(CGM);
+
   case llvm::Triple::aarch64:
   case llvm::Triple::aarch64_32:
   case llvm::Triple::aarch64_be: {
