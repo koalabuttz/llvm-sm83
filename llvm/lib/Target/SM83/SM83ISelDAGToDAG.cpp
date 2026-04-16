@@ -83,6 +83,8 @@ void SM83DAGToDAGISel::Select(SDNode *N) {
 
     // LDH optimization: constant address in $FF00-$FFFF → LDH_LOAD8 (2 bytes
     // vs 3 for LD HL,nn + LD r,(HL)).
+    // Direct-address optimization: constant address in $0000-$FEFF → LDnn_LOAD8
+    // (LD A,[nn] + LD dst,A), bypassing HL formation.
     if (LD->getMemoryVT() == MVT::i8 && !LD->isIndexed()) {
       if (auto *C = dyn_cast<ConstantSDNode>(Addr)) {
         uint64_t Addr16 = C->getZExtValue();
@@ -91,6 +93,17 @@ void SM83DAGToDAGISel::Select(SDNode *N) {
           SDValue Offset = CurDAG->getTargetConstant(Addr16 & 0xFF, DL, MVT::i8);
           SDNode *Res = CurDAG->getMachineNode(SM83::LDH_LOAD8, DL, MVT::i8,
                                                MVT::Other, Offset,
+                                               LD->getChain());
+          CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
+          CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 1), SDValue(Res, 1));
+          CurDAG->RemoveDeadNode(N);
+          return;
+        }
+        if (Addr16 <= 0xFEFF) {
+          SDLoc DL(N);
+          SDValue Imm = CurDAG->getTargetConstant(Addr16 & 0xFFFF, DL, MVT::i16);
+          SDNode *Res = CurDAG->getMachineNode(SM83::LDnn_LOAD8, DL, MVT::i8,
+                                               MVT::Other, Imm,
                                                LD->getChain());
           CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
           CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 1), SDValue(Res, 1));
@@ -131,6 +144,8 @@ void SM83DAGToDAGISel::Select(SDNode *N) {
     SDValue Addr = ST->getBasePtr();
 
     // LDH optimization: constant address in $FF00-$FFFF → LDH_STORE8.
+    // Direct-address optimization: constant address in $0000-$FEFF → LDnn_STORE8
+    // (LD A,src + LD [nn],A), bypassing HL formation.
     if (ST->getMemoryVT() == MVT::i8 && !ST->isTruncatingStore() &&
         !ST->isIndexed()) {
       if (auto *C = dyn_cast<ConstantSDNode>(Addr)) {
@@ -140,6 +155,16 @@ void SM83DAGToDAGISel::Select(SDNode *N) {
           SDValue Offset = CurDAG->getTargetConstant(Addr16 & 0xFF, DL, MVT::i8);
           SDNode *Res = CurDAG->getMachineNode(SM83::LDH_STORE8, DL, MVT::Other,
                                                ST->getValue(), Offset,
+                                               ST->getChain());
+          CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
+          CurDAG->RemoveDeadNode(N);
+          return;
+        }
+        if (Addr16 <= 0xFEFF) {
+          SDLoc DL(N);
+          SDValue Imm = CurDAG->getTargetConstant(Addr16 & 0xFFFF, DL, MVT::i16);
+          SDNode *Res = CurDAG->getMachineNode(SM83::LDnn_STORE8, DL, MVT::Other,
+                                               ST->getValue(), Imm,
                                                ST->getChain());
           CurDAG->ReplaceAllUsesOfValueWith(SDValue(N, 0), SDValue(Res, 0));
           CurDAG->RemoveDeadNode(N);

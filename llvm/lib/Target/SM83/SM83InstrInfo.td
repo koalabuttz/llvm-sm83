@@ -498,6 +498,19 @@ let mayStore = 1, hasSideEffects = 0, mayLoad = 0, Defs = [A] in
 def LDH_STORE8 : Pseudo<(outs), (ins GPR8:$src, i8imm:$addr),
                          "# LDH_STORE8 [$addr], $src", []>;
 
+// Direct-address load/store pseudos — for constant addresses in $0000–$FEFF.
+// Selected in ISelDAGToDAG when address is a compile-time constant outside the
+// $FF00-$FFFF LDH range. Expanded to: LD A,[nn] + LD dst,A  /  LD A,src + LD [nn],A
+// Bypasses HL formation, which fixes a codegen bug where H could be clobbered
+// while simultaneously holding the store value.
+let mayLoad = 1, hasSideEffects = 0, mayStore = 0, Defs = [A] in
+def LDnn_LOAD8 : Pseudo<(outs GPR8:$dst), (ins i16imm:$addr),
+                        "# LDnn_LOAD8 $dst, [$addr]", []>;
+
+let mayStore = 1, hasSideEffects = 0, mayLoad = 0, Defs = [A] in
+def LDnn_STORE8 : Pseudo<(outs), (ins GPR8:$src, i16imm:$addr),
+                         "# LDnn_STORE8 [$addr], $src", []>;
+
 //===----------------------------------------------------------------------===//
 // 16-bit Load immediate: LD rr, imm16
 //===----------------------------------------------------------------------===//

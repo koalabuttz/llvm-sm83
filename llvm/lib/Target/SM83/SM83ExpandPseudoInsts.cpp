@@ -79,6 +79,8 @@ private:
   bool expandCMP16EQrr(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLDH_LOAD8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
   bool expandLDH_STORE8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandLDnn_LOAD8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
+  bool expandLDnn_STORE8(MachineBasicBlock &MBB, MachineBasicBlock::iterator MI);
 };
 
 } // namespace
@@ -145,6 +147,8 @@ bool SM83ExpandPseudo::expandMI(MachineBasicBlock &MBB,
   case SM83::CMP16EQrr: return expandCMP16EQrr(MBB, MI);
   case SM83::LDH_LOAD8: return expandLDH_LOAD8(MBB, MI);
   case SM83::LDH_STORE8: return expandLDH_STORE8(MBB, MI);
+  case SM83::LDnn_LOAD8: return expandLDnn_LOAD8(MBB, MI);
+  case SM83::LDnn_STORE8: return expandLDnn_STORE8(MBB, MI);
   default:
     return false;
   }
@@ -729,6 +733,36 @@ bool SM83ExpandPseudo::expandLDH_STORE8(MachineBasicBlock &MBB,
   emitLD(MBB, MI, DL, SM83::A, SrcReg);
   // LDH [n], A
   BuildMI(MBB, MI, DL, TII->get(SM83::LDH_nA)).add(AddrOp);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandLDnn_LOAD8(MachineBasicBlock &MBB,
+                                        MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register DstReg = MI->getOperand(0).getReg();
+  MachineOperand &AddrOp = MI->getOperand(1);
+
+  // LD A, [nn]
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDA_nn)).add(AddrOp);
+  // LD dst, A (skip if dst is already A)
+  emitLD(MBB, MI, DL, DstReg, SM83::A);
+
+  MI->eraseFromParent();
+  return true;
+}
+
+bool SM83ExpandPseudo::expandLDnn_STORE8(MachineBasicBlock &MBB,
+                                         MachineBasicBlock::iterator MI) {
+  DebugLoc DL = MI->getDebugLoc();
+  Register SrcReg = MI->getOperand(0).getReg();
+  MachineOperand &AddrOp = MI->getOperand(1);
+
+  // LD A, src (skip if src is already A)
+  emitLD(MBB, MI, DL, SM83::A, SrcReg);
+  // LD [nn], A
+  BuildMI(MBB, MI, DL, TII->get(SM83::LDnn_A)).add(AddrOp);
 
   MI->eraseFromParent();
   return true;

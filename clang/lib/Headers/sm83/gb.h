@@ -262,26 +262,16 @@ typedef struct {
 #define MBC3_RTC_DH_HALT  0x40
 #define MBC3_RTC_DH_CARRY 0x80
 
-/*
- * The MBC register writes below use inline assembly instead of plain
- * volatile-pointer stores. Why: the SM83 backend currently has a codegen
- * quirk where `*(volatile u8*)CONST = VAL` can clobber the value when the
- * allocator routes the imm through H while it's also forming HL for an
- * indirect store. The inline-asm form (`ld [$addr], a`, 3-byte direct-
- * addressing opcode) avoids HL entirely and is both correct and smaller
- * than the compiled sequence. Can revert to plain stores once that
- * ISel corner is fixed.
- */
 #define MBC3_RAM_RTC_ENABLE()  do { \
-    __asm__ volatile("ld a, 0x0A \n\t ld [0x0000], a" ::: "a", "memory"); \
+    *(volatile unsigned char *)0x0000 = 0x0A; \
 } while (0)
 
 #define MBC3_RAM_RTC_DISABLE() do { \
-    __asm__ volatile("xor a \n\t ld [0x0000], a" ::: "a", "memory"); \
+    *(volatile unsigned char *)0x0000 = 0x00; \
 } while (0)
 
 #define MBC3_RTC_SELECT(reg) do { \
-    __asm__ volatile("ld [0x4000], a" :: "a"((unsigned char)(reg)) : "memory"); \
+    *(volatile unsigned char *)0x4000 = (unsigned char)(reg); \
 } while (0)
 
 /*
@@ -290,12 +280,8 @@ typedef struct {
  * called between enabling RTC access and reading.
  */
 #define MBC3_RTC_LATCH() do { \
-    __asm__ volatile( \
-        "xor a        \n\t" \
-        "ld [0x6000], a \n\t" \
-        "ld a, 1      \n\t" \
-        "ld [0x6000], a" \
-        ::: "a", "memory"); \
+    *(volatile unsigned char *)0x6000 = 0x00; \
+    *(volatile unsigned char *)0x6000 = 0x01; \
 } while (0)
 
 #define MBC3_RTC_READ  (*(volatile unsigned char *)0xA000)
