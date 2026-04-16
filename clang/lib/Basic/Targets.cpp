@@ -31,6 +31,7 @@
 #include "Targets/OSTargets.h"
 #include "Targets/PPC.h"
 #include "Targets/RISCV.h"
+#include "Targets/SM83.h"
 #include "Targets/SPIR.h"
 #include "Targets/Sparc.h"
 #include "Targets/SystemZ.h"
@@ -275,6 +276,8 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
 
   case llvm::Triple::avr:
     return std::make_unique<AVRTargetInfo>(Triple, Opts);
+  case llvm::Triple::sm83:
+    return std::make_unique<SM83TargetInfo>(Triple, Opts);
   case llvm::Triple::bpfeb:
   case llvm::Triple::bpfel:
     return std::make_unique<BPFTargetInfo>(Triple, Opts);

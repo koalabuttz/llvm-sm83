@@ -73,6 +73,17 @@ check "Nintendo logo present" test "$LOGO" = "ceed6666"
 START_BYTE=$(xxd -p -s 0x150 -l 1 "$TMPDIR/smoke.gb")
 check "_start code at \$0150" test "$START_BYTE" = "f3"  # DI instruction
 
+# Step 5: Behavioral verification via SM83 simulator
+echo "5. Running in SM83 simulator..."
+if python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/smoke.gb" \
+  --check 8000=AA --check 8001=55 --check 9800=00 --check FF40=81 2>&1; then
+  echo "  PASS: Simulator verification"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: Simulator verification"
+  FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
