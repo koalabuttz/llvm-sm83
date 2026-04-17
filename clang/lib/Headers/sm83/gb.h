@@ -235,6 +235,67 @@ typedef struct {
     *(volatile unsigned char *)0x0000 = 0x00; \
 } while (0)
 
+/*
+ * MBC1 banking-mode select (write to $6000-$7FFF):
+ *   0 = ROM-banking mode (default) — $4000-$5FFF is the high-bits of the
+ *       ROM bank number for ROMs > 512 KiB; SRAM is always bank 0.
+ *   1 = RAM-banking mode — $4000-$5FFF selects the SRAM bank 0-3; ROM bank
+ *       is limited to 0-31.
+ * Most 1 MiB+ carts stay in ROM mode and don't use multi-bank SRAM.
+ */
+#define MBC1_MODE_ROM() do { \
+    *(volatile unsigned char *)0x6000 = 0x00; \
+} while (0)
+
+#define MBC1_MODE_RAM() do { \
+    *(volatile unsigned char *)0x6000 = 0x01; \
+} while (0)
+
+/*
+ * Select SRAM bank 0-3 (MBC1 in RAM-banking mode only) or the ROM-bank
+ * high-bits (MBC1 in ROM-banking mode, for ROMs > 512 KiB). Wrap with
+ * MBC1_MODE_RAM() first if you intend SRAM bank select.
+ */
+#define MBC1_RAM_BANK(n) do { \
+    *(volatile unsigned char *)0x4000 = (unsigned char)((n) & 0x03); \
+} while (0)
+
+/*
+ * MBC3 SRAM enable/disable. Same ram-gate register as MBC1 ($0000-$1FFF,
+ * magic $0A). Kept distinct from MBC1_RAM_* so code stays self-documenting.
+ * MBC3 also exposes RTC registers via this gate — see MBC3_RAM_RTC_ENABLE
+ * below if you need both.
+ */
+#define MBC3_RAM_ENABLE()  do { \
+    *(volatile unsigned char *)0x0000 = 0x0A; \
+} while (0)
+
+#define MBC3_RAM_DISABLE() do { \
+    *(volatile unsigned char *)0x0000 = 0x00; \
+} while (0)
+
+/* Select MBC3 SRAM bank 0-3 (writes to $4000-$5FFF; values ≥ 0x08 select
+ * RTC registers instead — use MBC3_RTC_SELECT for that). */
+#define MBC3_RAM_BANK(n) do { \
+    *(volatile unsigned char *)0x4000 = (unsigned char)((n) & 0x03); \
+} while (0)
+
+/*
+ * MBC5 SRAM enable/disable + bank select. MBC5 supports 16 SRAM banks
+ * (128 KiB total) via $4000-$5FFF low-nibble select.
+ */
+#define MBC5_RAM_ENABLE()  do { \
+    *(volatile unsigned char *)0x0000 = 0x0A; \
+} while (0)
+
+#define MBC5_RAM_DISABLE() do { \
+    *(volatile unsigned char *)0x0000 = 0x00; \
+} while (0)
+
+#define MBC5_RAM_BANK(n) do { \
+    *(volatile unsigned char *)0x4000 = (unsigned char)((n) & 0x0F); \
+} while (0)
+
 /* --- MBC3 RTC ---------------------------------------------------------- */
 /*
  * Real-Time Clock (MBC3 only). The RTC exposes five 8-bit counters through

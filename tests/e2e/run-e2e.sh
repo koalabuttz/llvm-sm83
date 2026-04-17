@@ -1,8 +1,16 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 
 # End-to-end smoke test for the SM83 toolchain.
 # Compiles LLVM IR → object → links with lld → converts to .gb ROM.
+# Pass --backend={sim,mgba,both} as the first arg (default: sim).
+
+BACKEND="sim"
+if [ "${1:-}" = "--backend=sim" ] || [ "${1:-}" = "--backend=mgba" ] \
+   || [ "${1:-}" = "--backend=both" ]; then
+  BACKEND="${1#--backend=}"
+  shift
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LLVM_SRC="/data/llvm-sm83"
@@ -77,16 +85,31 @@ check "Nintendo logo present" test "$LOGO" = "ceed6666"
 START_BYTE=$(xxd -p -s 0x150 -l 1 "$TMPDIR/smoke.gb")
 check "_start code at \$0150" test "$START_BYTE" = "f3"  # DI instruction
 
-# Step 5: Behavioral verification via SM83 simulator
-echo "5. Running in SM83 simulator..."
-if python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/smoke.gb" \
-  --check 8000=AA --check 8001=55 --check 9800=00 --check FF40=81 2>&1; then
-  echo "  PASS: Simulator verification"
-  PASS=$((PASS + 1))
-else
-  echo "  FAIL: Simulator verification"
-  FAIL=$((FAIL + 1))
-fi
+# Step 5: Behavioral verification
+echo "5. Running ROM under backend=$BACKEND ..."
+sim_rc=0; mgba_rc=0; checks=(--check 8000=AA --check 8001=55 --check 9800=00 --check FF40=81)
+case "$BACKEND" in
+  sim|both)
+    if python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/smoke.gb" "${checks[@]}" 2>&1; then
+      echo "  PASS: sim verification"
+      PASS=$((PASS + 1))
+    else
+      echo "  FAIL: sim verification"
+      FAIL=$((FAIL + 1)); sim_rc=1
+    fi
+    ;;
+esac
+case "$BACKEND" in
+  mgba|both)
+    if python3 "$SCRIPT_DIR/run-mgba-harness.py" "$TMPDIR/smoke.gb" "${checks[@]}" 2>&1; then
+      echo "  PASS: mgba verification"
+      PASS=$((PASS + 1))
+    else
+      echo "  FAIL: mgba verification"
+      FAIL=$((FAIL + 1)); mgba_rc=1
+    fi
+    ;;
+esac
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

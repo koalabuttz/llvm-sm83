@@ -1,7 +1,18 @@
 #!/bin/bash
-set -euo pipefail
+# set -e intentionally omitted: individual harness failures must be counted
+# and reported (PASS/FAIL), not abort the suite. set -u still catches typos
+# in variable names.
+set -uo pipefail
 
-# End-to-end C test for SM83: compile C → link → .gb ROM → verify in simulator.
+# End-to-end C test for SM83: compile C → link → .gb ROM → verify in simulator
+# and/or mGBA. Pass --backend={sim,mgba,both} as the first arg (default: sim).
+
+BACKEND="sim"
+if [ "${1:-}" = "--backend=sim" ] || [ "${1:-}" = "--backend=mgba" ] \
+   || [ "${1:-}" = "--backend=both" ]; then
+  BACKEND="${1#--backend=}"
+  shift
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LLVM_SRC="/data/llvm-sm83"
@@ -13,6 +24,47 @@ FAIL=0
 
 mkdir -p "$TMPDIR"
 trap 'rm -rf "$TMPDIR"' EXIT
+
+# run_harness: backend-aware dispatch around run-harness.py / run-mgba-harness.py.
+# Accepts the same ARGs as run-harness.py. Exits 0 iff the chosen backend(s)
+# all succeed. If --rtc-start is among the args, mGBA is skipped (rtc latch
+# not wired into the libmgba harness yet) — sim runs regardless.
+run_harness() {
+  local rtc_used=0
+  for a in "$@"; do
+    case "$a" in --rtc-start) rtc_used=1 ;; esac
+  done
+
+  local sim_rc=0 mgba_rc=0
+  local sim_harness="$SCRIPT_DIR/run-harness.py"
+  local mgba_harness="$SCRIPT_DIR/run-mgba-harness.py"
+  case "$BACKEND" in
+    sim)
+      python3 "$sim_harness" "$@"
+      return $?
+      ;;
+    mgba)
+      if [ $rtc_used -eq 1 ]; then
+        echo "  SKIP: mgba (--rtc-start not supported by mgba-harness)"
+        return 0
+      fi
+      python3 "$mgba_harness" "$@"
+      return $?
+      ;;
+    both)
+      echo "  [sim]"
+      python3 "$sim_harness" "$@" || sim_rc=1
+      if [ $rtc_used -eq 1 ]; then
+        echo "  [mgba] SKIP: --rtc-start not supported"
+      else
+        echo "  [mgba]"
+        python3 "$mgba_harness" "$@" || mgba_rc=1
+      fi
+      [ $sim_rc -eq 0 ] && [ $mgba_rc -eq 0 ]
+      return $?
+      ;;
+  esac
+}
 
 CLANG="$BUILD/bin/clang"
 LLD="$BUILD/bin/ld.lld"
@@ -63,7 +115,7 @@ check "ROM checksums valid" python3 "$MAKEROM" --check-only "$TMPDIR/c-test.gb"
 
 # Step 4: Run in simulator
 echo "4. Running in SM83 simulator..."
-python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/c-test.gb" \
+run_harness "$TMPDIR/c-test.gb" \
   --check C100=1E \
   --check C101=DE \
   --check C102=0A
@@ -111,7 +163,7 @@ fi
 
 # Build + run the ROM to confirm runtime HRAM copy works.
 python3 "$MAKEROM" "$TMPDIR/hram-test.elf" -o "$TMPDIR/hram-test.gb" >/dev/null
-python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/hram-test.gb" --check C100=77
+run_harness "$TMPDIR/hram-test.gb" --check C100=77
 HARNESS_RC=$?
 if [ $HARNESS_RC -eq 0 ]; then
   echo "  PASS: HRAM trampoline executed at runtime"
@@ -163,7 +215,7 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/c-vblank-test.gb" \
+run_harness "$TMPDIR/c-vblank-test.gb" \
   --max-steps 200000 \
   --check C100=03 \
   --check C101=A5 \
@@ -219,7 +271,7 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/mbc1-test.gb" \
+run_harness "$TMPDIR/mbc1-test.gb" \
   --check C100=DE --check C101=AD --check C102=BE --check C103=EF
 HARNESS_RC=$?
 if [ $HARNESS_RC -eq 0 ]; then
@@ -264,7 +316,7 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/cgb-test.gb" --check C100=A5
+run_harness "$TMPDIR/cgb-test.gb" --check C100=A5
 HARNESS_RC=$?
 if [ $HARNESS_RC -eq 0 ]; then
   echo "  PASS: CGB MMIO writes did not crash and main ran to completion"
@@ -302,7 +354,7 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/mbc5-test.gb" \
+run_harness "$TMPDIR/mbc5-test.gb" \
   --check C100=C0 --check C101=FF --check C102=EE --check C103=42
 HARNESS_RC=$?
 if [ $HARNESS_RC -eq 0 ]; then
@@ -340,7 +392,7 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/mbc3-test.gb" \
+run_harness "$TMPDIR/mbc3-test.gb" \
   --check C100=DE --check C101=AD --check C102=BE --check C103=EF
 HARNESS_RC=$?
 if [ $HARNESS_RC -eq 0 ]; then
@@ -382,7 +434,7 @@ else
   FAIL=$((FAIL + 1))
 fi
 
-python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/farcall-test.gb" \
+run_harness "$TMPDIR/farcall-test.gb" \
   --check C100=37 --check C101=69
 HARNESS_RC=$?
 if [ $HARNESS_RC -eq 0 ]; then
@@ -410,7 +462,7 @@ python3 "$MAKEROM" "$TMPDIR/mbc3-rtc-test.elf" -o "$TMPDIR/mbc3-rtc-test.gb" \
 # Start the RTC at 0 days, 10h, 30m, 5s. The test latches immediately
 # so we expect S=5, M=30, H=10, DL=0, DH=0 (small jitter on S is fine —
 # use an exact check because sim latches within a tiny number of steps).
-python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/mbc3-rtc-test.gb" \
+run_harness "$TMPDIR/mbc3-rtc-test.gb" \
   --rtc-start 0:10:30:05 \
   --check C100=05 --check C101=1E --check C102=0A --check C103=00 --check C104=00
 HARNESS_RC=$?
@@ -438,7 +490,7 @@ check "farcall-mbc5-highbank-test.elf built" test -f "$TMPDIR/farcall-mbc5-highb
 python3 "$MAKEROM" "$TMPDIR/farcall-mbc5-highbank-test.elf" -o "$TMPDIR/farcall-mbc5-highbank-test.gb" \
   --mbc5 --rom-banks 256 >/dev/null
 
-python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/farcall-mbc5-highbank-test.gb" \
+run_harness "$TMPDIR/farcall-mbc5-highbank-test.gb" \
   --check C100=CF
 HARNESS_RC=$?
 if [ $HARNESS_RC -eq 0 ]; then
@@ -466,7 +518,7 @@ check "farcall-indirect-test.elf built" test -f "$TMPDIR/farcall-indirect-test.e
 python3 "$MAKEROM" "$TMPDIR/farcall-indirect-test.elf" -o "$TMPDIR/farcall-indirect-test.gb" \
   --mbc3 --rom-banks 4 >/dev/null
 
-python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/farcall-indirect-test.gb" \
+run_harness "$TMPDIR/farcall-indirect-test.gb" \
   --check C100=0B --check C101=28
 HARNESS_RC=$?
 if [ $HARNESS_RC -eq 0 ]; then
@@ -491,7 +543,7 @@ check "oam-dma-test.elf built" test -f "$TMPDIR/oam-dma-test.elf"
 python3 "$MAKEROM" "$TMPDIR/oam-dma-test.elf" -o "$TMPDIR/oam-dma-test.gb" \
   --mbc1 --rom-banks 2 >/dev/null
 
-python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/oam-dma-test.gb" \
+run_harness "$TMPDIR/oam-dma-test.gb" \
   --check C100=A1 --check C101=B2 --check C102=C3 --check C103=D4 --check C104=E5
 HARNESS_RC=$?
 if [ $HARNESS_RC -eq 0 ]; then
@@ -500,6 +552,63 @@ if [ $HARNESS_RC -eq 0 ]; then
 else
   echo "  FAIL: OAM DMA did not produce expected OAM content"
   FAIL=$((FAIL + 1))
+fi
+
+# --- Cartridge SRAM test (Round 9 item 3) ---------------------------------
+echo ""
+echo "17. Compiling sram-test.c (MBC1 + cart SRAM write, read-back, persist)..."
+"$CLANG" --target=sm83-unknown-none -ffreestanding -O1 \
+  -c "$SCRIPT_DIR/sram-test.c" -o "$TMPDIR/sram-test.o"
+check "sram-test.o built" test -f "$TMPDIR/sram-test.o"
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/sram-test.o" \
+  "$CRT0" "$RUNTIME" "$RUNTIME_ASM" -o "$TMPDIR/sram-test.elf"
+check "sram-test.elf built" test -f "$TMPDIR/sram-test.elf"
+
+python3 "$MAKEROM" "$TMPDIR/sram-test.elf" -o "$TMPDIR/sram-test.gb" \
+  --mbc1 --rom-banks 2 --ram-size 8K >/dev/null
+
+# Verify the header: $0147 should be $03 (MBC1+RAM+BATTERY), $0149 = $02 (8K).
+CART_TYPE=$(python3 -c "print('%02x' % open('$TMPDIR/sram-test.gb','rb').read()[0x147])")
+RAM_SIZE=$(python3 -c "print('%02x' % open('$TMPDIR/sram-test.gb','rb').read()[0x149])")
+if [ "$CART_TYPE" = "03" ] && [ "$RAM_SIZE" = "02" ]; then
+  echo "  PASS: MBC1+RAM+BATTERY header (\$0147=\$03, \$0149=\$02 for 8K)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: header bytes wrong (got \$0147=\$$CART_TYPE, \$0149=\$$RAM_SIZE)"
+  FAIL=$((FAIL + 1))
+fi
+
+# Run 1: write pattern, read it back into WRAM, dump SRAM to a .sav file.
+# run_harness only supports sim (the mgba-harness doesn't yet forward
+# --sram-save; not in Round 9 scope). Gate the save-file emission on sim.
+if [ "$BACKEND" = "sim" ] || [ "$BACKEND" = "both" ]; then
+  python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/sram-test.gb" \
+    --sram-save "$TMPDIR/sram-test.sav" \
+    --check C100=11 --check C101=22 --check C102=33 --check C103=44
+  HARNESS_RC=$?
+else
+  run_harness "$TMPDIR/sram-test.gb" \
+    --check C100=11 --check C101=22 --check C102=33 --check C103=44
+  HARNESS_RC=$?
+fi
+if [ $HARNESS_RC -eq 0 ]; then
+  echo "  PASS: SRAM write + read-back through RAM gate"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: SRAM round-trip didn't land expected pattern in WRAM"
+  FAIL=$((FAIL + 1))
+fi
+
+# Verify the .sav file content (only when sim ran — else skip silently).
+if [ -f "$TMPDIR/sram-test.sav" ]; then
+  SAV_HEAD=$(python3 -c "print(open('$TMPDIR/sram-test.sav','rb').read(4).hex())")
+  if [ "$SAV_HEAD" = "11223344" ]; then
+    echo "  PASS: .sav file captured SRAM pattern (battery-save emulation)"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL: .sav file head was \$$SAV_HEAD (expected \$11223344)"
+    FAIL=$((FAIL + 1))
+  fi
 fi
 
 echo ""

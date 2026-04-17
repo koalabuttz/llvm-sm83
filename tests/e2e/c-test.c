@@ -40,5 +40,5 @@ void main(void) {
     RESULT = r;
     MARKER = 0xDE;
     IDENTITY = identity(10);
-    while (1) {}
+    /* fall through to crt0's __sm83_exit halt loop */
 }

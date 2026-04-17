@@ -40,6 +40,15 @@ class SM83Sim:
             self.mbc = 'mbc1'
         else:
             self.mbc = 'rom'
+        # Cartridge SRAM ($A000-$BFFF). Size comes from header byte $0149:
+        # 0=none, 2=8KB (1 bank), 3=32KB (4 banks), 4=128KB (16 banks),
+        # 5=64KB (8 banks). Tests that don't use SRAM leave cart_ram empty.
+        ram_size_byte = rom_data[0x0149] if len(rom_data) > 0x0149 else 0x00
+        cart_ram_banks = {0x00: 0, 0x01: 1, 0x02: 1, 0x03: 4,
+                          0x04: 16, 0x05: 8}.get(ram_size_byte, 0)
+        self.cart_ram = bytearray(cart_ram_banks * 0x2000)
+        self.cart_ram_bank = 0
+        self.mbc1_banking_mode = 0  # 0 = ROM-bank mode, 1 = RAM-bank mode
         # Bank 0 into the memory array so reads through self.mem work.
         bank0_len = min(len(rom_data), 0x4000)
         self.mem[0:bank0_len] = rom_data[:bank0_len]
@@ -148,18 +157,26 @@ class SM83Sim:
             if file_off < len(self.rom):
                 return self.rom[file_off]
             return 0xFF  # unmapped bank region reads as open-bus 0xFF
-        # $A000-$BFFF: MBC3 RTC registers (when enabled and an RTC reg
-        # is selected). Round 7 doesn't model SRAM banks in this window,
-        # so selector 0x00-0x03 reads fall through to plain mem[].
-        if self.mbc == 'mbc3' and 0xA000 <= addr < 0xC000 \
-                and self.ram_rtc_enabled and 0x08 <= self.rtc_selected <= 0x0C:
-            return {
-                0x08: self.rtc_latched_s,
-                0x09: self.rtc_latched_m,
-                0x0A: self.rtc_latched_h,
-                0x0B: self.rtc_latched_dl,
-                0x0C: self.rtc_latched_dh,
-            }[self.rtc_selected]
+        # $A000-$BFFF: cartridge RAM / MBC3 RTC window.
+        if 0xA000 <= addr < 0xC000:
+            # RAM gate off → bus returns 0xFF (real MBC behaviour).
+            if not self.ram_rtc_enabled:
+                return 0xFF
+            # MBC3 RTC mapping (selector 0x08-0x0C).
+            if self.mbc == 'mbc3' and 0x08 <= self.rtc_selected <= 0x0C:
+                return {
+                    0x08: self.rtc_latched_s,
+                    0x09: self.rtc_latched_m,
+                    0x0A: self.rtc_latched_h,
+                    0x0B: self.rtc_latched_dl,
+                    0x0C: self.rtc_latched_dh,
+                }[self.rtc_selected]
+            # SRAM (if the cart has any).
+            if self.cart_ram:
+                off = self.cart_ram_bank * 0x2000 + (addr - 0xA000)
+                if off < len(self.cart_ram):
+                    return self.cart_ram[off]
+            return 0xFF  # no SRAM populated → open bus
         return self.mem[addr]
 
     # --- Interrupt dispatch ---
@@ -219,12 +236,23 @@ class SM83Sim:
             return
         # $4000-$5FFF: MBC3 RAM/RTC select. Values 0x00-0x03 = SRAM bank,
         # 0x08-0x0C = map the corresponding RTC register into $A000-$BFFF.
-        # On MBC1/MBC5 this is a secondary bank register we don't model.
+        # On MBC1/MBC5 this is a secondary bank register (SRAM bank select).
         if self.mbc == 'mbc3' and 0x4000 <= addr < 0x6000:
             self.rtc_selected = val & 0x0F
+            if 0x00 <= self.rtc_selected <= 0x03:
+                self.cart_ram_bank = self.rtc_selected
             return
-        # $6000-$7FFF: MBC3 latch pulse (write $00 then $01). On MBC1 this
-        # is the banking-mode register; ignored.
+        if self.mbc == 'mbc1' and 0x4000 <= addr < 0x6000:
+            if self.mbc1_banking_mode == 1:
+                self.cart_ram_bank = val & 0x03
+            return
+        if self.mbc == 'mbc5' and 0x4000 <= addr < 0x6000:
+            self.cart_ram_bank = val & 0x0F
+            return
+        # $6000-$7FFF: MBC1 banking mode (0=ROM / 1=RAM) OR MBC3 latch pulse.
+        if self.mbc == 'mbc1' and 0x6000 <= addr < 0x8000:
+            self.mbc1_banking_mode = val & 0x01
+            return
         if self.mbc == 'mbc3' and 0x6000 <= addr < 0x8000:
             if val == 0x00:
                 self.rtc_latch_stage = 1
@@ -240,6 +268,26 @@ class SM83Sim:
             return
         # ROM region $0000-$7FFF is otherwise read-only.
         if addr < 0x8000:
+            return
+        # Cartridge SRAM window $A000-$BFFF: gated by ram_rtc_enabled; with
+        # MBC3, RTC selectors route writes to the RTC counter registers.
+        if 0xA000 <= addr < 0xC000:
+            if not self.ram_rtc_enabled:
+                return
+            if self.mbc == 'mbc3' and 0x08 <= self.rtc_selected <= 0x0C:
+                # Writes while an RTC register is mapped update the live
+                # counter (matches MBC3 spec). Latched value unchanged until
+                # next latch pulse.
+                if self.rtc_selected == 0x08: self.rtc_live_s  = val & 0x3F
+                elif self.rtc_selected == 0x09: self.rtc_live_m  = val & 0x3F
+                elif self.rtc_selected == 0x0A: self.rtc_live_h  = val & 0x1F
+                elif self.rtc_selected == 0x0B: self.rtc_live_dl = val
+                elif self.rtc_selected == 0x0C: self.rtc_live_dh = val & 0xC1
+                return
+            if self.cart_ram:
+                off = self.cart_ram_bank * 0x2000 + (addr - 0xA000)
+                if off < len(self.cart_ram):
+                    self.cart_ram[off] = val
             return
         # OAM DMA trigger ($FF46): copy 160 bytes from (val << 8) to $FE00..$FE9F.
         # Real hardware locks every memory region but HRAM for 160 machine cycles;

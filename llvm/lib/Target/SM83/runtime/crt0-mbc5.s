@@ -111,6 +111,8 @@ _start:
     ; 5. Halt forever if main() returns.
     ; -----------------------------------------------------------------------
     di
+    .globl __sm83_exit
+__sm83_exit:
 .Lhalt_loop:
     halt
     nop

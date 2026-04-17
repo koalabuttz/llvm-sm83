@@ -13,12 +13,15 @@
 
 #include <gb.h>
 
-/* Placed in HRAM. Must land in $FF80-$FFFE. */
+/* Placed in HRAM. Must land in $FF80-$FFFE.
+ *
+ * The wait loop MUST use `volatile` on `i` — clang `-O1` will otherwise
+ * delete the loop (C11 6.8.5p6 allows eliminating side-effect-free
+ * loops), leaving an empty trampoline that returns into ROM while OAM
+ * DMA is still blocking the bus. See tests/e2e/EMULATOR-BUGS.md BUG-3. */
 void GB_HRAM oam_dma_trampoline(void) {
-    /* A minimal HRAM routine: pulse OAM DMA then busy-wait. In real code
-     * the wait loop is exactly 160 cycles (40 × 4-cycle decrements). */
     REG_DMA = 0xC1;
-    unsigned char i = 40;
+    volatile unsigned char i = 40;
     do { i--; } while (i);
 }
 

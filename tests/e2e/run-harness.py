@@ -23,12 +23,28 @@ def main():
     parser.add_argument("--rtc-start", default=None,
                         help="Initial MBC3 RTC time HH:MM:SS or D:HH:MM:SS "
                              "(MBC3 carts only; default: all zero)")
+    parser.add_argument("--sram-load", metavar="PATH", default=None,
+                        help="Preload cartridge SRAM from a .sav file "
+                             "before running (battery-save emulation).")
+    parser.add_argument("--sram-save", metavar="PATH", default=None,
+                        help="Dump cartridge SRAM to a .sav file after the "
+                             "ROM halts (battery-save emulation).")
     args = parser.parse_args()
 
     with open(args.rom, 'rb') as f:
         rom_data = f.read()
 
     sim = SM83Sim(rom_data)
+
+    if args.sram_load:
+        with open(args.sram_load, 'rb') as f:
+            saved = f.read()
+        if len(saved) != len(sim.cart_ram):
+            print(f"WARNING: --sram-load size ({len(saved)} B) != "
+                  f"cart SRAM size ({len(sim.cart_ram)} B); loading "
+                  f"min of the two", file=sys.stderr)
+        n = min(len(saved), len(sim.cart_ram))
+        sim.cart_ram[:n] = saved[:n]
 
     if args.rtc_start:
         parts = args.rtc_start.split(':')
@@ -66,6 +82,10 @@ def main():
         else:
             print(f"  FAIL: [${addr:04X}] = ${actual:02X} (expected ${expected:02X})")
             failures += 1
+
+    if args.sram_save:
+        with open(args.sram_save, 'wb') as f:
+            f.write(bytes(sim.cart_ram))
 
     if failures:
         print(f"\n{failures} check(s) failed")

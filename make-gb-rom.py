@@ -32,6 +32,27 @@ CART_MBC1     = 0x01
 CART_MBC3     = 0x13  # MBC3 + RAM + BATTERY (no RTC runtime yet)
 CART_MBC5     = 0x1B  # MBC5 + RAM + BATTERY
 
+# When --ram-size is passed, upgrade each MBC's base byte to the RAM+BATTERY
+# variant. Callers of --mbc1 that also want SRAM must pass --ram-size.
+CART_TYPE_WITH_RAM = {
+    CART_MBC1: 0x03,  # MBC1 + RAM + BATTERY
+    CART_MBC3: 0x13,  # MBC3 + RAM + BATTERY (already the default)
+    CART_MBC5: 0x1B,  # MBC5 + RAM + BATTERY (already the default)
+}
+
+# RAM-size byte ($0149). Pan docs: 0x00 = none, 0x02 = 8 KiB (1 bank),
+# 0x03 = 32 KiB (4 banks), 0x04 = 128 KiB (16 banks), 0x05 = 64 KiB (8 banks).
+# 0x01 (2 KiB) is listed by Pan docs but unused by real carts; we accept it
+# only because some older docs mention it.
+RAM_SIZE_BYTE = {
+    "none": 0x00,
+    "2K":   0x01,
+    "8K":   0x02,
+    "32K":  0x03,
+    "128K": 0x04,
+    "64K":  0x05,
+}
+
 # CGB flag byte ($0143).
 CGB_DMG_ONLY      = 0x00  # DMG (monochrome) only; CGB boots in compat mode.
 CGB_COMPATIBLE    = 0x80  # Plays on both DMG and CGB.
@@ -165,13 +186,16 @@ def emit_sym_file(symbols, path):
 
 
 def build_rom(elf_data, title="SM83PROG", mbc=CART_ROM_ONLY, rom_banks=2,
-              cgb_flag=CGB_COMPATIBLE):
+              cgb_flag=CGB_COMPATIBLE, ram_size="none"):
     """Build a Game Boy ROM from ELF loadable segments.
 
     mbc: cartridge type byte ($0147). Default ROM-only.
     rom_banks: number of 16 KB banks in the output file. Must be ≥ 2 (one
       fixed bank 0 + at least one bank 1). 2 = 32 KB ROM-only default.
     cgb_flag: $0143 byte. CGB_COMPATIBLE (default) keeps existing behaviour.
+    ram_size: "none" | "2K" | "8K" | "32K" | "64K" | "128K". When non-"none"
+      the cart type is automatically upgraded to the RAM+BATTERY variant
+      (if one exists for the chosen MBC) and $0149 is set accordingly.
     """
     if rom_banks < 2 or rom_banks not in ROM_BANK_BYTE:
         raise ValueError(
@@ -219,14 +243,22 @@ def build_rom(elf_data, title="SM83PROG", mbc=CART_ROM_ONLY, rom_banks=2,
     # CGB flag at $0143: 0x00/0x80/0xC0 per --dmg-only / default / --cgb-only.
     rom[0x0143] = cgb_flag
 
-    # Cartridge type at $0147: ROM-only / MBC1 / MBC3 / MBC5.
-    rom[0x0147] = mbc
+    # Cartridge type at $0147 — may be upgraded if the caller also
+    # requested SRAM and the chosen MBC has a RAM+BATTERY variant.
+    cart_type = mbc
+    if ram_size != "none" and mbc == CART_ROM_ONLY:
+        raise ValueError(
+            "Plain ROM carts don't have SRAM; pass --mbc1 (or --mbc3/--mbc5) "
+            "alongside --ram-size.")
+    if ram_size != "none" and mbc in CART_TYPE_WITH_RAM:
+        cart_type = CART_TYPE_WITH_RAM[mbc]
+    rom[0x0147] = cart_type
 
     # ROM size at $0148: log2(banks)-1 form.
     rom[0x0148] = ROM_BANK_BYTE[rom_banks]
 
-    # RAM size at $0149: $00 = no external RAM
-    rom[0x0149] = 0x00
+    # RAM size at $0149.
+    rom[0x0149] = RAM_SIZE_BYTE[ram_size]
 
     # Destination code at $014A: $01 = non-Japanese
     rom[0x014A] = 0x01
@@ -323,6 +355,11 @@ def main():
     parser.add_argument("--rom-banks", type=int, default=2,
                         choices=sorted(b for b in ROM_BANK_BYTE if b >= 2),
                         help="Number of 16 KB ROM banks (default: 2 = 32 KB)")
+    parser.add_argument("--ram-size", default="none",
+                        choices=list(RAM_SIZE_BYTE.keys()),
+                        help="Cartridge SRAM size. Non-'none' implies "
+                             "RAM+BATTERY (the common case) and upgrades "
+                             "the MBC cart-type byte accordingly.")
     cgb_group = parser.add_mutually_exclusive_group()
     cgb_group.add_argument("--cgb-only", action="store_const",
                            dest="cgb_flag", const=CGB_ONLY,
@@ -352,7 +389,8 @@ def main():
         elf_data = f.read()
 
     rom = build_rom(elf_data, title=args.title, mbc=args.mbc,
-                    rom_banks=args.rom_banks, cgb_flag=args.cgb_flag)
+                    rom_banks=args.rom_banks, cgb_flag=args.cgb_flag,
+                    ram_size=args.ram_size)
 
     with open(args.output, 'wb') as f:
         f.write(rom)

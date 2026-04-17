@@ -58,9 +58,9 @@ lcd_off:
   ; Turn LCD back on: bit 7 (enable) + bit 0 (BG display).
   store volatile i8 -127, ptr %lcdc_ptr  ; $81
 
-  ; Halt forever.
-  br label %halt_loop
-
-halt_loop:
-  br label %halt_loop
+  ; Return; crt0's __sm83_exit halt loop terminates the program.
+  ; (Do NOT use a `br label %self` spin here — see tests/e2e/EMULATOR-BUGS.md
+  ; BUG-1/BUG-2: sm83sim treats JP-to-self as halt, but mGBA correctly
+  ; spins forever.)
+  ret void
 }
