@@ -1,12 +1,10 @@
 /*
  * gb.h — Game Boy hardware register definitions for SM83.
  *
- * Installed at <clang-resource-dir>/include/sm83/gb.h and auto-added to the
- * system include path by SM83ToolChain, so SM83 programs use #include <gb.h>.
- *
- * Kept in sync with llvm/lib/Target/SM83/runtime/gb.h (the canonical copy
- * used by in-tree tests that predate the driver wiring). Edit both together
- * until they are consolidated.
+ * Canonical source-of-truth. Installed at <clang-resource-dir>/include/sm83/
+ * gb.h by clang/lib/Headers/CMakeLists.txt and auto-added to the system
+ * include path by SM83ToolChain (clang/lib/Driver/ToolChains/SM83.cpp), so
+ * freestanding SM83 programs resolve `#include <gb.h>` here.
  *
  * Usage:
  *   #include <gb.h>
