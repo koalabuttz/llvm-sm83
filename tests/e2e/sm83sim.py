@@ -241,6 +241,16 @@ class SM83Sim:
         # ROM region $0000-$7FFF is otherwise read-only.
         if addr < 0x8000:
             return
+        # OAM DMA trigger ($FF46): copy 160 bytes from (val << 8) to $FE00..$FE9F.
+        # Real hardware locks every memory region but HRAM for 160 machine cycles;
+        # we model the effect instantaneously (tests busy-wait in HRAM anyway).
+        if addr == 0xFF46:
+            src = (val & 0xFF) << 8
+            for i in range(0xA0):
+                # Read through the normal read8 so ROM/bank window/WRAM all work.
+                self.mem[0xFE00 + i] = self.read8(src + i)
+            self.mem[addr] = val
+            return
         self.mem[addr] = val
 
     def read16(self, addr):

@@ -187,3 +187,27 @@ memmove:
 .memmove_done:
 	pop hl              ; HL = original dst
 	ret
+
+; ==========================================================================
+; gb_oam_dma — HRAM-resident OAM DMA trampoline (Round 8 item 4).
+;
+; Call with the sprite shadow buffer's high byte in A. The routine writes
+; A to $FF46 (which starts the 160-cycle DMA transfer from A<<8 to $FE00)
+; and busy-waits exactly long enough for the DMA to complete. MUST execute
+; from HRAM because DMA locks everything except HRAM for its duration.
+;
+; The routine is linked into .hram; crt0 copies it from ROM to $FF80+n at
+; boot, so users can just call gb_oam_dma(page) each frame.
+;
+; SM83 CC: A = src page (arg0). No return value.
+; Clobbers: A, B, F.
+; ==========================================================================
+	.section .hram, "ax", @progbits
+	.global gb_oam_dma
+gb_oam_dma:
+	ldh  [0x46], a      ; $FF46 — start DMA from (A << 8) into $FE00..$FE9F
+	ld   a, 40          ; 40 * (dec a = 4 + jr = 12) = 640 clock cycles
+.oamdma_wait:
+	dec  a
+	jr   nz, .oamdma_wait
+	ret

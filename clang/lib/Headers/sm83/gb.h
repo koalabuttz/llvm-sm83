@@ -420,6 +420,31 @@ typedef struct {
         _gbfc_ret; \
     })
 
+/* --- OAM DMA (Round 8 item 4) ------------------------------------------ */
+/*
+ * Every real GB game with moving sprites needs an HRAM-resident routine
+ * that writes $FF46 (starting a 160-machine-cycle DMA from a page-aligned
+ * RAM buffer into the OAM at $FE00) and busy-waits the exact duration.
+ * The routine MUST execute from HRAM because the DMA transfer locks
+ * every other memory region during its run.
+ *
+ * `gb_oam_dma` is an 8-byte routine placed in .hram by the runtime
+ * (sm83-runtime.s). crt0 copies it from its ROM image to $FF80+n at
+ * boot, so users just call it each frame with the sprite shadow
+ * buffer's high byte in A.
+ *
+ * Usage:
+ *   static oam_entry_t shadow[40] __attribute__((aligned(256)));
+ *     ...
+ *     // ... fill shadow[] each frame ...
+ *     gb_oam_dma_trigger(shadow);
+ */
+extern void gb_oam_dma(unsigned char src_page);
+
+static inline void gb_oam_dma_trigger(const void *shadow) {
+    gb_oam_dma((unsigned char)(((unsigned short)shadow) >> 8));
+}
+
 /* --- CGB-specific helpers ---------------------------------------------- */
 /*
  * Select VRAM bank 0 or 1 for access through $8000-$9FFF.

@@ -477,6 +477,31 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# --- OAM DMA test (Round 8 item 4) ----------------------------------------
+echo ""
+echo "16. Compiling oam-dma-test.c (gb_oam_dma HRAM trampoline)..."
+"$CLANG" --target=sm83-unknown-none -ffreestanding -O1 \
+  -c "$SCRIPT_DIR/oam-dma-test.c" -o "$TMPDIR/oam-dma-test.o"
+check "oam-dma-test.o built" test -f "$TMPDIR/oam-dma-test.o"
+
+"$LLD" $LLDFLAGS -T "$LINKER_SCRIPT" "$TMPDIR/oam-dma-test.o" "$CRT0" "$RUNTIME" "$RUNTIME_ASM" \
+  -o "$TMPDIR/oam-dma-test.elf"
+check "oam-dma-test.elf built" test -f "$TMPDIR/oam-dma-test.elf"
+
+python3 "$MAKEROM" "$TMPDIR/oam-dma-test.elf" -o "$TMPDIR/oam-dma-test.gb" \
+  --mbc1 --rom-banks 2 >/dev/null
+
+python3 "$SCRIPT_DIR/run-harness.py" "$TMPDIR/oam-dma-test.gb" \
+  --check C100=A1 --check C101=B2 --check C102=C3 --check C103=D4 --check C104=E5
+HARNESS_RC=$?
+if [ $HARNESS_RC -eq 0 ]; then
+  echo "  PASS: OAM DMA copied 5 pattern bytes into OAM (\$FE00..\$FE04)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: OAM DMA did not produce expected OAM content"
+  FAIL=$((FAIL + 1))
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
